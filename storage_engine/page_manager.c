@@ -122,15 +122,14 @@ void read_page(PageId page_id) {
 
   Page page = {};
   if (fread(&page, sizeof(Page), 1, file) != 1) {
-
-    printf("page_id         : %u\n", (unsigned)page.header.page_id);
-    printf("num_slots       : %u\n", (unsigned)page.header.num_slots);
-    printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
-    printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
     perror("fread");
     fclose(file);
     return;
   }
+  printf("page_id         : %u\n", (unsigned)page.header.page_id);
+  printf("num_slots       : %u\n", (unsigned)page.header.num_slots);
+  printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
+  printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
 
   fclose(file);
 }
