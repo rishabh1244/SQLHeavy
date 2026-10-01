@@ -28,14 +28,11 @@ Responsibilities:
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 typedef uint32_t PageId;
-
-#define PAGE_SIZE 2400
 
 #define DB_NAME "TEST_DB"
 #define TABLE_NAME "TEST_TABLE"
@@ -49,16 +46,14 @@ typedef struct {
 } Record;
 
 typedef struct {
-  uint16_t offset;
-  uint16_t length;
-} Slot;
-
-typedef struct {
   PageId page_id;
   uint16_t num_slots;
   uint16_t free_space_start;
   uint16_t free_space_end;
 } PageHeader;
+
+// total page size = data area + page header
+#define PAGE_SIZE (2400 + sizeof(PageHeader))
 
 typedef struct {
   PageHeader header;
@@ -103,8 +98,41 @@ void allocate_page(PageId page_id) {
   page.header.num_slots = 0;
   page.header.free_space_start = sizeof(PageHeader);
   page.header.free_space_end = PAGE_SIZE;
-
-  fwrite(page.data, PAGE_SIZE, 1, file);
+  fwrite(&page, sizeof(Page), 1, file);
+  fclose(file);
 }
 
-int main() { allocate_page(0); }
+void read_page(PageId page_id) {
+  char fileName[256];
+
+  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
+           TABLE_NAME);
+  FILE *file = fopen(fileName, "rb");
+
+  if (file == NULL) {
+    perror("file not present");
+    return;
+  }
+
+  if (fseek(file, (long)page_id * (long)PAGE_SIZE, SEEK_SET) != 0) {
+    perror("fseek");
+    fclose(file);
+    return;
+  }
+
+  Page page = {};
+  if (fread(&page, sizeof(Page), 1, file) != 1) {
+
+    printf("page_id         : %u\n", (unsigned)page.header.page_id);
+    printf("num_slots       : %u\n", (unsigned)page.header.num_slots);
+    printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
+    printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
+    perror("fread");
+    fclose(file);
+    return;
+  }
+
+  fclose(file);
+}
+
+int main() { read_page(0); }
