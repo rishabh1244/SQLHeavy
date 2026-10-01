@@ -1,0 +1,1176 @@
+MYDB — DATABASE IMPLEMENTATION PLAN
+====================================
+
+Goal
+----
+Build a learning-focused database engine primarily in C.
+
+Architecture:
+
+    Client / Test CLI / Web Server
+                 |
+                 v
+           Database API
+                 |
+                 v
+          Database Engine
+                 |
+       +---------+----------+
+       |         |          |
+       v         v          v
+    Catalog   Storage    Transactions
+                 |
+        +--------+--------+
+        |        |        |
+        v        v        v
+      Pages   Buffer    Records
+                Pool
+                 |
+                 v
+             Disk Files
+
+Later:
+    Rust + DataFusion
+            |
+      TableProvider
+            |
+           FFI
+            |
+       Database API
+            |
+        C Database
+
+
+IMPORTANT ARCHITECTURAL RULES
+------------------------------
+
+1. C is the database engine.
+2. Rust/DataFusion is added later and is NOT part of the first C implementation.
+3. The C engine should not know about SQL or DataFusion.
+4. The web server is a client of the database, not part of the storage engine.
+5. Only the low-level storage/file layer should directly perform filesystem I/O.
+6. Higher layers work with database abstractions such as pages, records, table IDs,
+   page IDs, and record IDs.
+7. Do not make CSV the native storage format.
+8. The native database format should be page-based binary storage.
+9. Build the system incrementally. Do not implement WAL, MVCC, B+ trees, etc.
+   before the basic page/storage system works.
+
+
+============================================================
+1. DATABASE API
+============================================================
+
+Purpose
+-------
+Provide the stable interface through which clients access the database.
+
+Possible API:
+
+    Database *db_open(const char *path);
+    void db_close(Database *db);
+
+    int db_create_table(...);
+    int db_drop_table(...);
+
+    int db_insert(...);
+    int db_get(...);
+    int db_update(...);
+    int db_delete(...);
+
+    int db_scan(...);
+
+The API should not expose internal storage details.
+
+Clients can eventually include:
+
+    - C test programs
+    - a CLI
+    - a web server
+    - Rust/DataFusion through FFI
+
+
+============================================================
+2. DATABASE / CATALOG
+============================================================
+
+Purpose
+-------
+The catalog describes what exists in the database.
+
+Logical structure:
+
+    Database
+      |
+      +-- Table: users
+      |      +-- id
+      |      +-- name
+      |      +-- age
+      |
+      +-- Table: orders
+      |
+      +-- Table: products
+
+The catalog stores metadata such as:
+
+    - database name
+    - table ID
+    - table name
+    - schema
+    - column names
+    - column types
+    - table storage metadata
+    - indexes associated with a table
+    - eventually statistics
+
+Important distinction:
+
+    Catalog = "What exists?"
+    Storage = "Where are the actual bytes?"
+
+Do NOT store all table rows inside the Table struct.
+
+
+============================================================
+3. DATABASE STRUCTURE
+============================================================
+
+Logical representation:
+
+    Database
+      |
+      +-- tables[]
+      |
+      +-- catalog metadata
+      |
+      +-- storage metadata
+
+Conceptually:
+
+    typedef struct {
+        uint32_t table_id;
+        char name[64];
+        Schema *schema;
+        ...
+    } Table;
+
+    typedef struct {
+        char name[64];
+        Table *tables;
+        uint32_t table_count;
+        ...
+    } Database;
+
+These structures represent metadata, not the entire physical contents
+of the database.
+
+A table should point indirectly to its physical storage through table IDs,
+page IDs, roots, etc.
+
+
+============================================================
+4. NATIVE STORAGE FORMAT — PAGES
+============================================================
+
+Do NOT use CSV as the native database format.
+
+CSV is useful for:
+
+    - importing data
+    - exporting data
+    - simple early experiments
+
+But the actual database should eventually use binary page files.
+
+Example:
+
+    mydb/
+        catalog
+        data/
+            table_001.dat
+            table_002.dat
+            table_003.dat
+
+A table file can be divided into fixed-size pages:
+
+    table_001.dat
+
+    +----------+
+    | Page 0   |
+    +----------+
+    | Page 1   |
+    +----------+
+    | Page 2   |
+    +----------+
+    | Page 3   |
+    +----------+
+    | ...      |
+    +----------+
+
+Start with a page size such as:
+
+    PAGE_SIZE = 4096 bytes
+
+Later this can be made configurable if desired.
+
+
+============================================================
+5. PAGE MANAGER / FILE MANAGER
+============================================================
+
+Purpose
+-------
+Provide low-level access to database pages.
+
+Responsibilities:
+
+    - open database files
+    - close database files
+    - read a page
+    - write a page
+    - allocate a new page
+    - identify page offsets
+    - manage file growth
+
+Core operations:
+
+    read_page(page_id, buffer)
+    write_page(page_id, buffer)
+    allocate_page()
+
+For a fixed page size:
+
+    byte_offset = page_id * PAGE_SIZE
+
+The rest of the database should not repeatedly call:
+
+    fopen()
+    fread()
+    fwrite()
+    fseek()
+    pread()
+    pwrite()
+
+Instead, those operations should be concentrated in the low-level
+file/page layer.
+
+
+============================================================
+6. PAGE STRUCTURE
+============================================================
+
+A page is a fixed-size block of database storage.
+
+Example:
+
+    4096 byte page
+
+    +--------------------------------+
+    | Page Header                    |
+    +--------------------------------+
+    |                                |
+    | Records / tuples               |
+    |                                |
+    |                                |
+    |          free space            |
+    |                                |
+    |                                |
+    +--------------------------------+
+    | Slot Directory                 |
+    +--------------------------------+
+
+The page header can eventually contain:
+
+    - page ID
+    - page type
+    - number of slots
+    - free-space information
+    - other metadata
+
+Do not initially overdesign the header.
+
+
+============================================================
+7. RECORD / TUPLE MANAGER
+============================================================
+
+Purpose
+-------
+Convert logical records into physical bytes stored inside pages.
+
+Example logical record:
+
+    User:
+        id = 42
+        name = "Alice"
+        age = 24
+
+Physical representation:
+
+    bytes stored inside a page
+
+Responsibilities:
+
+    - insert record into a page
+    - find record in a page
+    - update record
+    - delete record
+    - serialize record
+    - deserialize record
+    - manage free space
+
+Use a Record ID / RID concept:
+
+    RecordId:
+        page_id
+        slot_id
+
+Example:
+
+    users
+      |
+      +-- RecordId
+             page_id = 42
+             slot_id = 7
+
+This allows the database to locate a physical record.
+
+
+============================================================
+8. SLOTTED PAGES
+============================================================
+
+Use a slotted-page design for variable-size records.
+
+Conceptually:
+
+    +--------------------------+
+    | Page Header              |
+    +--------------------------+
+    | Record                   |
+    | Record                   |
+    | Record                   |
+    |                          |
+    |       Free Space         |
+    |                          |
+    +--------------------------+
+    | Slot 0                   |
+    | Slot 1                   |
+    | Slot 2                   |
+    +--------------------------+
+
+The slot directory maps logical slot IDs to physical record locations.
+
+This makes records movable within a page without changing their
+logical RecordId.
+
+
+============================================================
+9. SERIALIZATION
+============================================================
+
+Never assume that a C struct can simply be dumped to disk forever.
+
+Avoid making this the database format:
+
+    fwrite(&struct, sizeof(struct), 1, file);
+
+because of:
+
+    - padding
+    - alignment
+    - platform differences
+    - future schema changes
+
+Instead define an explicit binary representation.
+
+Example:
+
+    uint64_t id
+    int32_t age
+    uint32_t name_length
+    name bytes
+
+Then provide:
+
+    serialize_record()
+    deserialize_record()
+
+Use fixed-width integer types:
+
+    uint8_t
+    uint16_t
+    uint32_t
+    uint64_t
+
+
+============================================================
+10. BUFFER POOL
+============================================================
+
+Purpose
+-------
+Keep frequently used database pages in RAM.
+
+Without a buffer pool:
+
+    Database
+       |
+       v
+      Disk
+       |
+       v
+    Database
+       |
+       v
+      Disk
+
+With a buffer pool:
+
+    Database
+       |
+       v
+    Buffer Pool
+       |
+       +-- Page 5
+       +-- Page 18
+       +-- Page 42
+       +-- Page 91
+       |
+       v
+      Disk
+
+Responsibilities:
+
+    - fetch page
+    - pin page
+    - unpin page
+    - mark page dirty
+    - evict page
+    - flush page
+
+Later implement a replacement strategy such as:
+
+    LRU
+    Clock
+
+Do not start with a sophisticated eviction policy.
+
+
+============================================================
+11. INDEX MANAGER
+============================================================
+
+Purpose
+-------
+Find records efficiently without scanning every table page.
+
+Without an index:
+
+    search id=5000
+        |
+        v
+    scan every page
+
+With an index:
+
+    id=5000
+       |
+       v
+    B+ Tree
+       |
+       v
+    RecordId
+       |
+       v
+    page + slot
+       |
+       v
+    Buffer Pool
+       |
+       v
+    Record
+
+Start with a B+ tree.
+
+Index API can eventually resemble:
+
+    index_insert(key, record_id)
+    index_search(key)
+    index_delete(key)
+
+Do NOT implement the index before basic page and record storage works.
+
+
+============================================================
+12. TRANSACTION MANAGER
+============================================================
+
+Later component.
+
+Responsibilities:
+
+    - begin transaction
+    - commit
+    - abort
+    - transaction IDs
+    - transaction state
+
+Example:
+
+    BEGIN
+        update A
+        update B
+    COMMIT
+
+
+============================================================
+13. CONCURRENCY / LOCK MANAGER
+============================================================
+
+Later component.
+
+Responsibilities:
+
+    - coordinate concurrent transactions
+    - shared locks
+    - exclusive locks
+    - lock table
+    - eventually deadlock handling
+
+Do not build this initially.
+
+
+============================================================
+14. WAL / RECOVERY
+============================================================
+
+Later component.
+
+WAL = Write-Ahead Logging.
+
+Purpose:
+
+    protect the database from crashes and incomplete writes.
+
+Conceptually:
+
+    Transaction
+         |
+         v
+        WAL
+         |
+         v
+    Database Pages
+         |
+         v
+        Disk
+
+After a crash:
+
+    Open database
+         |
+         v
+    Read WAL
+         |
+         v
+    Recover database
+
+
+============================================================
+15. CHECKPOINTING
+============================================================
+
+Later.
+
+Checkpointing limits how much WAL must be processed during recovery.
+
+Conceptually:
+
+    WAL
+      |
+      +---- changes
+      |
+      v
+    Checkpoint
+      |
+      v
+    consistent database state
+
+
+============================================================
+16. RECOVERY MANAGER
+============================================================
+
+Later.
+
+Responsibilities:
+
+    - detect incomplete work
+    - replay WAL
+    - restore consistent state
+    - coordinate checkpoints
+
+
+============================================================
+17. QUERY / DATA ACCESS BOUNDARY
+============================================================
+
+The C database should NOT become a SQL engine.
+
+Eventually:
+
+    SQL
+     |
+     v
+    DataFusion
+     |
+     v
+    Rust TableProvider
+     |
+     v
+    Rust FFI
+     |
+     v
+    C Database API
+     |
+     v
+    Storage Engine
+
+DataFusion handles:
+
+    - SQL parsing
+    - logical planning
+    - optimization
+    - physical planning
+    - query execution
+
+C handles:
+
+    - catalog/storage access
+    - records
+    - pages
+    - indexes
+    - transactions
+    - persistence
+    - recovery
+
+The C engine should return data rather than printing it.
+
+
+============================================================
+18. WEB SERVER
+============================================================
+
+The web server is a client of the C database.
+
+Example:
+
+    POST /users
+        |
+        v
+    db_insert(...)
+
+    GET /users/42
+        |
+        v
+    db_get(...)
+
+    PUT /users/42
+        |
+        v
+    db_update(...)
+
+The web server should NOT directly access database files.
+
+Architecture:
+
+    Web Server
+         |
+         v
+    Database API
+         |
+         v
+    C Database
+         |
+         v
+    Storage Engine
+         |
+         v
+    Disk
+
+
+============================================================
+19. TEST CLIENT / CLI
+============================================================
+
+Before building the web server, create a simple C test program.
+
+Example:
+
+    ./mydb_test
+
+    create database
+    create table
+    insert record
+    get record
+    update record
+    delete record
+    scan table
+
+This allows the storage engine to be developed independently of HTTP.
+
+
+============================================================
+20. PHYSICAL DATABASE LAYOUT
+============================================================
+
+Do not commit too early to one exact directory structure.
+
+A possible early layout:
+
+    mydb/
+        catalog/
+        data/
+            table_001.dat
+            table_002.dat
+
+Later:
+
+    mydb/
+        catalog/
+        data/
+            table_001.dat
+            table_002.dat
+        indexes/
+            table_001/
+        wal/
+            ...
+
+The important abstraction is:
+
+    database
+        |
+        +-- catalog
+        |
+        +-- tables
+               |
+               +-- pages
+                      |
+                      +-- records
+
+NOT:
+
+    database
+        |
+        +-- table.csv
+
+
+============================================================
+21. IMPLEMENTATION ORDER
+============================================================
+
+PHASE 0 — C BASICS
+
+Know:
+
+    - pointers
+    - structs
+    - malloc/free
+    - arrays
+    - uint32_t / uint64_t
+    - memcpy/memset
+    - file descriptors
+    - open/close
+    - pread/pwrite
+    - offsets
+    - error handling
+
+
+PHASE 1 — FILE / PAGE STORAGE
+
+Implement:
+
+    - database creation/open
+    - database close
+    - page size
+    - page IDs
+    - allocate page
+    - read page
+    - write page
+
+First test:
+
+    create database
+        |
+        v
+    allocate page
+        |
+        v
+    write bytes
+        |
+        v
+    close
+        |
+        v
+    reopen
+        |
+        v
+    read page
+        |
+        v
+    verify bytes
+
+
+PHASE 2 — PAGE FORMAT
+
+Implement:
+
+    - page header
+    - free-space tracking
+    - page IDs
+    - basic slot directory
+
+Test:
+
+    insert bytes into page
+    read them back
+    update them
+    delete them
+
+
+PHASE 3 — RECORD MANAGER
+
+Implement:
+
+    - schema representation
+    - record serialization
+    - record deserialization
+    - insert record
+    - get record
+    - update record
+    - delete record
+    - RecordId
+
+
+PHASE 4 — TABLE / CATALOG
+
+Implement:
+
+    - database metadata
+    - table metadata
+    - table IDs
+    - table schemas
+    - create table
+    - drop table
+    - find table by name
+
+Now:
+
+    Database
+       |
+       +-- users
+       +-- orders
+       +-- products
+
+maps to physical storage.
+
+
+PHASE 5 — BUFFER POOL
+
+Implement:
+
+    - buffer frames
+    - page fetching
+    - pin/unpin
+    - dirty pages
+    - flushing
+    - basic eviction
+
+
+PHASE 6 — TABLE SCANS
+
+Implement:
+
+    db_scan(table_id)
+
+Flow:
+
+    table
+      |
+      v
+    pages
+      |
+      v
+    records
+      |
+      v
+    return records
+
+This is the first point where your database can behave like a basic
+persistent table store.
+
+
+PHASE 7 — B+ TREE
+
+Implement:
+
+    - search
+    - insert
+    - split
+    - delete
+    - merge/redistribution
+
+Connect:
+
+    key
+      |
+      v
+    B+ Tree
+      |
+      v
+    RecordId
+      |
+      v
+    Buffer Pool
+      |
+      v
+    Page
+      |
+      v
+    Record
+
+
+PHASE 8 — TRANSACTIONS
+
+Implement:
+
+    - transaction IDs
+    - begin
+    - commit
+    - abort
+
+
+PHASE 9 — CONCURRENCY
+
+Implement:
+
+    - locking
+    - shared/exclusive locks
+    - basic conflict handling
+
+Later:
+
+    - MVCC
+    - snapshots
+    - isolation levels
+
+
+PHASE 10 — WAL
+
+Implement:
+
+    - log records
+    - append log
+    - flush log
+    - LSNs
+    - page LSNs
+
+
+PHASE 11 — RECOVERY
+
+Implement:
+
+    - crash detection
+    - WAL replay
+    - recovery
+    - checkpoints
+
+
+PHASE 12 — WEB SERVER
+
+Only after the database API is reasonably stable.
+
+The server should simply translate HTTP requests into database API calls.
+
+
+PHASE 13 — RUST / DATAFUSION
+
+Only after the C database works.
+
+Architecture:
+
+    DataFusion
+        |
+    TableProvider
+        |
+    Rust wrapper
+        |
+    FFI
+        |
+    C Database API
+        |
+    C Storage Engine
+        |
+    Disk
+
+
+============================================================
+22. FINAL TARGET ARCHITECTURE
+============================================================
+
+                         CLIENTS
+                            |
+             +--------------+--------------+
+             |              |              |
+          Test CLI      Web Server    Rust/DataFusion
+             |              |              |
+             +--------------+--------------+
+                            |
+                     Database API
+                            |
+              +-------------+-------------+
+              |                           |
+           Catalog                  Database Engine
+                                          |
+                         +----------------+----------------+
+                         |                |                |
+                    Record Manager   Buffer Pool     Index Manager
+                         |                |                |
+                         +----------------+----------------+
+                                          |
+                                    Storage Manager
+                                          |
+                                      Page Manager
+                                          |
+                                      File Manager
+                                          |
+                                         Disk
+                                          |
+                              +-----------+-----------+
+                              |                       |
+                            Data                    WAL
+                              |                       |
+                              +-----------+-----------+
+                                          |
+                                      Recovery
+
+
+============================================================
+23. FIRST REAL MILESTONE
+============================================================
+
+Do NOT attempt the entire architecture.
+
+First goal:
+
+    C program
+       |
+       v
+    Database API
+       |
+       v
+    File/Page Manager
+       |
+       v
+    database file
+       |
+       v
+    Disk
+
+Make this work:
+
+    db_open()
+    allocate_page()
+    write_page()
+    read_page()
+    db_close()
+
+Test persistence:
+
+    process 1:
+        write "hello database"
+
+    process 2:
+        reopen database
+        read page
+        verify "hello database"
+
+After this works, introduce records.
+
+After records work, introduce the buffer pool.
+
+After that, introduce indexes.
+
+The architecture should grow from working components rather than
+implementing every box in the final diagram upfront.
+
+
+============================================================
+CORE MENTAL MODEL
+============================================================
+
+Logical:
+
+    Database
+       |
+       v
+    Table
+       |
+       v
+    Record
+       |
+       v
+    Column
+
+
+Physical:
+
+    Database File
+       |
+       v
+    Page
+       |
+       v
+    Slot
+       |
+       v
+    Record Bytes
+
+
+The database connects these worlds:
+
+    Table
+      |
+      v
+    Table ID
+      |
+      v
+    Page IDs
+      |
+      v
+    Pages
+      |
+      v
+    Records
+
+
+The most important early abstraction is therefore:
+
+    LOGICAL DATA
+         |
+         v
+    CATALOG / TABLE METADATA
+         |
+         v
+    PHYSICAL STORAGE
+         |
+         v
+    PAGES
+         |
+         v
+    RECORDS
+         |
+         v
+    DISK
+
