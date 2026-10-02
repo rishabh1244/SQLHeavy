@@ -51,6 +51,10 @@ typedef struct {
   uint16_t free_space_start;
   uint16_t free_space_end;
 } PageHeader;
+typedef struct {
+  uint32_t page_count;
+  uint32_t page_size;
+} fileHeader;
 
 // total page size = data area + page header
 #define PAGE_SIZE (2400 + sizeof(PageHeader))
@@ -62,7 +66,6 @@ typedef struct {
 
 // page_id,num_slots,free_space_start,free_space_end\n
 #define HEADER_STRING_MAX 64
-
 void allocate_page(PageId page_id) {
   char dirName[256];
   char fileName[256];
@@ -93,7 +96,18 @@ void allocate_page(PageId page_id) {
     return;
   }
 
+  // give incrementing id to each page
   Page page = {};
+
+  if (page_id == 0) {
+    // should also add a header containing the count of page
+    // create a pageHeader struct and append that too
+    fileHeader file_head;
+    file_head.page_count = 1;
+    file_head.page_size = PAGE_SIZE;
+    fwrite(&file_head, sizeof(fileHeader), 1, file);
+  }
+
   page.header.page_id = page_id;
   page.header.num_slots = 0;
   page.header.free_space_start = sizeof(PageHeader);
@@ -114,11 +128,15 @@ void read_page(PageId page_id) {
     return;
   }
 
-  if (fseek(file, (long)page_id * (long)PAGE_SIZE, SEEK_SET) != 0) {
+  if (fseek(file, (long)page_id * (long)PAGE_SIZE + sizeof(fileHeader),
+            SEEK_SET) != 0) {
     perror("fseek");
     fclose(file);
     return;
   }
+
+  // seek header
+  //
 
   Page page = {};
   if (fread(&page, sizeof(Page), 1, file) != 1) {
@@ -134,4 +152,28 @@ void read_page(PageId page_id) {
   fclose(file);
 }
 
-int main() { read_page(0); }
+unsigned int read_header() {
+  // reads file header
+  char fileName[256];
+
+  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
+           TABLE_NAME);
+
+  FILE *file = fopen(fileName, "rb");
+  if (file == NULL) {
+    perror("file not present");
+    return -1;
+  }
+  fileHeader header = {};
+  if (fread(&header, sizeof(fileHeader), 1, file) != 1) {
+    perror("fread");
+    fclose(file);
+    return -1;
+  }
+  printf("page count %u\n", header.page_count);
+  fclose(file);
+  return header.page_count;
+}
+
+// int insert_record(Page *page, const uint8_t *data, uint16_t length) {}
+int main() { read_header(); }
