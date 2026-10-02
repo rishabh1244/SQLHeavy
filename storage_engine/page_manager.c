@@ -215,8 +215,7 @@ PageId fetch_latest() {
   }
   return header.page_count - 1;
 }
-
-void insert_data(uint64_t record) {
+void insert_record(const void *data, uint16_t length) {
   PageId page_id = fetch_latest();
 
   if (page_id == (PageId)-1) {
@@ -231,7 +230,7 @@ void insert_data(uint64_t record) {
     return;
   }
 
-  if ((size_t)page.header.free_space_start + sizeof(record) >
+  if ((size_t)page.header.free_space_start + length >
       (size_t)page.header.free_space_end) {
     // newest page is full, keep appending on a fresh page
     allocate_page(page_id + 1);
@@ -243,18 +242,29 @@ void insert_data(uint64_t record) {
     }
   }
 
-  memcpy((uint8_t *)&page + page.header.free_space_start, &record,
-         sizeof(record));
-  page.header.free_space_start += sizeof(record);
+  memcpy(page.data + page.header.free_space_start, data, length);
+
+  page.header.free_space_start += length;
   page.header.num_slots += 1;
 
   write_page(page_id, &page);
 }
 
 // int insert_record(Page *page, const uint8_t *data, uint16_t length) {}
+typedef struct {
+  uint16_t age;
+  char name[23];
+} record;
+
 int main() {
-  insert_data(111);
-  insert_data(222);
+  record r1;
+  r1.age = 12;
+  strcpy(r1.name, "Sizuka");
+
+  int value = 112;
+
+  insert_record(&value, sizeof(int));
+  insert_record(&r1, sizeof(record));
 
   PageId latest = fetch_latest();
   printf("latest page id: %u\n", (unsigned)latest);
@@ -269,7 +279,8 @@ int main() {
     uint64_t record = 0;
     memcpy(&record, (uint8_t *)&page + sizeof(PageHeader) + i * sizeof(record),
            sizeof(record));
-    printf("record[%u]       : %llu\n", (unsigned)i, (unsigned long long)record);
+    printf("record[%u]       : %llu\n", (unsigned)i,
+           (unsigned long long)record);
   }
   return 0;
 }
