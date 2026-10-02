@@ -1,66 +1,11 @@
-/*
-  Purpose
--------
-Provide low-level access to database pages.
+#include "page_manager.h"
 
-Responsibilities:
-
-    - open database files
-    - close database files
-    - read a page
-    - write a page
-    - allocate a new page
-    - identify page offsets
-    - manage file growth
-
-    read_page(page_id, buffer)
-    write_page(page_id, buffer)
-    allocate_page()
-
-  The rest of the database should not repeatedly call:
-    fopen()
-    fread() etc.
-
-
-*/
-
-#include <alloca.h>
 #include <errno.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
-typedef uint32_t PageId;
-
-#define DB_NAME "TEST_DB"
-#define TABLE_NAME "TEST_TABLE"
-
-// will contain as a folder/file
-// data/DB_NAME/TABLE_NAME.dat
-
-typedef struct {
-  PageId page_id;
-  uint16_t num_slots;
-  uint16_t free_space_start;
-  uint16_t free_space_end;
-} PageHeader;
-typedef struct {
-  uint32_t page_count;
-  uint32_t page_size;
-} fileHeader;
-
-// total page size = data area + page header
-#define PAGE_SIZE (2400 + sizeof(PageHeader))
-
-typedef struct {
-  PageHeader header;
-  uint8_t data[PAGE_SIZE - sizeof(PageHeader)];
-} Page;
-
-// page_id,num_slots,free_space_start,free_space_end\n
-#define HEADER_STRING_MAX 64
 void allocate_page(PageId page_id) {
   char dirName[256];
   char fileName[256];
@@ -143,18 +88,11 @@ Page read_page(PageId page_id) {
     return page;
   }
 
-  // seek header
-  //
-
   if (fread(&page, sizeof(Page), 1, file) != 1) {
     perror("fread");
     fclose(file);
     return page;
   }
-  // printf("page_id         : %u\n", (unsigned)page.header.page_id);
-  // printf("num_slots       : %u\n", (unsigned)page.header.num_slots);
-  // printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
-  // printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
 
   fclose(file);
   return page;
@@ -190,7 +128,7 @@ void write_page(PageId page_id, const Page *page) {
 
 // can be used to check how many pages are present ,also size of each page
 // returns the id of the newest page, (PageId)-1 when there is no page yet
-PageId fetch_latest() {
+PageId fetch_latest(void) {
   // reads file header
   char fileName[256];
 
@@ -202,6 +140,7 @@ PageId fetch_latest() {
     perror("file not present");
     return (PageId)-1;
   }
+
   fileHeader header = {};
   if (fread(&header, sizeof(fileHeader), 1, file) != 1) {
     perror("fread");
@@ -215,6 +154,7 @@ PageId fetch_latest() {
   }
   return header.page_count - 1;
 }
+
 void insert_record(const void *data, uint16_t length) {
   PageId page_id = fetch_latest();
 
@@ -242,45 +182,10 @@ void insert_record(const void *data, uint16_t length) {
     }
   }
 
-  memcpy(page.data + page.header.free_space_start, data, length);
+  memcpy((uint8_t *)&page + page.header.free_space_start, data, length);
 
   page.header.free_space_start += length;
   page.header.num_slots += 1;
 
   write_page(page_id, &page);
-}
-
-// int insert_record(Page *page, const uint8_t *data, uint16_t length) {}
-typedef struct {
-  uint16_t age;
-  char name[23];
-} record;
-
-int main() {
-  record r1;
-  r1.age = 12;
-  strcpy(r1.name, "Sizuka");
-
-  int value = 112;
-
-  insert_record(&value, sizeof(int));
-  insert_record(&r1, sizeof(record));
-
-  PageId latest = fetch_latest();
-  printf("latest page id: %u\n", (unsigned)latest);
-
-  Page page = read_page(latest);
-  printf("page_id         : %u\n", (unsigned)page.header.page_id);
-  printf("num_slots       : %u\n", (unsigned)page.header.num_slots);
-  printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
-  printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
-
-  for (uint16_t i = 0; i < page.header.num_slots; i++) {
-    uint64_t record = 0;
-    memcpy(&record, (uint8_t *)&page + sizeof(PageHeader) + i * sizeof(record),
-           sizeof(record));
-    printf("record[%u]       : %llu\n", (unsigned)i,
-           (unsigned long long)record);
-  }
-  return 0;
 }
