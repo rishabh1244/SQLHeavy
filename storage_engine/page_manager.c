@@ -6,20 +6,20 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-void allocate_page(PageId page_id) {
+PageId allocate_page(void) {
   char dirName[256];
   char fileName[256];
 
   if (mkdir("../data", 0755) != 0 && errno != EEXIST) {
     perror("mkdir ../data");
-    return;
+    return (PageId)-1;
   }
 
   snprintf(dirName, sizeof(dirName), "../data/%s", DB_NAME);
 
   if (mkdir(dirName, 0755) != 0 && errno != EEXIST) {
     perror("mkdir");
-    return;
+    return (PageId)-1;
   }
 
   snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
@@ -33,22 +33,22 @@ void allocate_page(PageId page_id) {
 
   if (file == NULL) {
     perror("fopen");
-    return;
+    return (PageId)-1;
   }
 
-  // give incrementing id to each page
   Page page = {};
   fileHeader file_head = {};
 
   if (fread(&file_head, sizeof(fileHeader), 1, file) != 1 ||
       file_head.page_size != PAGE_SIZE) {
+    // no file header yet (or stale layout): start from an empty file
     file_head.page_count = 0;
     file_head.page_size = PAGE_SIZE;
   }
 
-  if (file_head.page_count < page_id + 1) {
-    file_head.page_count = page_id + 1;
-  }
+  // the new page always goes at the end: id = current page_count
+  PageId page_id = file_head.page_count;
+  file_head.page_count = page_id + 1;
 
   page.header.page_id = page_id;
   page.header.num_slots = 0;
@@ -59,13 +59,23 @@ void allocate_page(PageId page_id) {
             SEEK_SET) != 0) {
     perror("fseek");
     fclose(file);
-    return;
+    return (PageId)-1;
   }
-  fwrite(&page, sizeof(Page), 1, file);
+  if (fwrite(&page, sizeof(Page), 1, file) != 1) {
+    perror("fwrite");
+    fclose(file);
+    return (PageId)-1;
+  }
 
   rewind(file);
-  fwrite(&file_head, sizeof(fileHeader), 1, file);
+  if (fwrite(&file_head, sizeof(fileHeader), 1, file) != 1) {
+    perror("fwrite");
+    fclose(file);
+    return (PageId)-1;
+  }
+
   fclose(file);
+  return page_id;
 }
 
 Page read_page(PageId page_id) {
@@ -96,34 +106,6 @@ Page read_page(PageId page_id) {
 
   fclose(file);
   return page;
-}
-
-void write_page(PageId page_id, const Page *page) {
-  char fileName[256];
-
-  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
-           TABLE_NAME);
-  FILE *file = fopen(fileName, "r+b");
-
-  if (file == NULL) {
-    perror("file not present");
-    return;
-  }
-
-  if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(fileHeader),
-            SEEK_SET) != 0) {
-    perror("fseek");
-    fclose(file);
-    return;
-  }
-
-  if (fwrite(page, sizeof(Page), 1, file) != 1) {
-    perror("fwrite");
-    fclose(file);
-    return;
-  }
-
-  fclose(file);
 }
 
 // can be used to check how many pages are present ,also size of each page
@@ -157,29 +139,27 @@ PageId fetch_latest(void) {
 
 void insert_record(const void *data, uint16_t length) {
   PageId page_id = fetch_latest();
+  Page page = {};
 
-  if (page_id == (PageId)-1) {
-    // no page in the file yet, start with page 0
-    allocate_page(0);
-    page_id = 0;
+  if (page_id != (PageId)-1) {
+    page = read_page(page_id);
   }
 
-  Page page = read_page(page_id);
+  // no page yet, unreadable page, or page full -> append a fresh page
+  if (page_id == (PageId)-1 || page.header.page_id != page_id ||
+      (size_t)page.header.free_space_start + length >
+          (size_t)page.header.free_space_end) {
+    page_id = allocate_page();
+    if (page_id == (PageId)-1) {
+      fprintf(stderr, "failed to allocate page\n");
+      return;
+    }
+    page = read_page(page_id);
+  }
+
   if (page.header.page_id != page_id) {
     fprintf(stderr, "failed to read page %u\n", (unsigned)page_id);
     return;
-  }
-
-  if ((size_t)page.header.free_space_start + length >
-      (size_t)page.header.free_space_end) {
-    // newest page is full, keep appending on a fresh page
-    allocate_page(page_id + 1);
-    page_id = page_id + 1;
-    page = read_page(page_id);
-    if (page.header.page_id != page_id) {
-      fprintf(stderr, "failed to read page %u\n", (unsigned)page_id);
-      return;
-    }
   }
 
   memcpy((uint8_t *)&page + page.header.free_space_start, data, length);
@@ -187,5 +167,21 @@ void insert_record(const void *data, uint16_t length) {
   page.header.free_space_start += length;
   page.header.num_slots += 1;
 
-  write_page(page_id, &page);
+  char fileName[256];
+  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
+           TABLE_NAME);
+
+  FILE *file = fopen(fileName, "r+b");
+  if (file == NULL) {
+    perror("file not present");
+    return;
+  }
+
+  if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(fileHeader),
+            SEEK_SET) != 0 ||
+      fwrite(&page, sizeof(Page), 1, file) != 1) {
+    perror("write page");
+  }
+
+  fclose(file);
 }

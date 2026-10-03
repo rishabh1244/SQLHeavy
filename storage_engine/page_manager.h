@@ -6,16 +6,17 @@ Provide low-level access to database pages.
 Responsibilities:
 
     - open database files
-    - close database files
-    - read a page
-    - write a page
-    - allocate a new page
+    - allocate a new page (writes the file header when the file is new)
+    - read a page by PageId
+    - insert a record into the latest page
+    - fetch the latest page id
     - identify page offsets
     - manage file growth
 
-    read_page(page_id, buffer)
-    write_page(page_id, buffer)
-    allocate_page()
+    allocate_page()            -> id of the new page (page_count, +1 after)
+    read_page(page_id)
+    fetch_latest()
+    insert_record(data, length)
 
   The rest of the database should not repeatedly call:
     fopen()
@@ -59,9 +60,8 @@ typedef struct {
 // page_id,num_slots,free_space_start,free_space_end\n
 #define HEADER_STRING_MAX 64
 
-void allocate_page(PageId page_id);
+PageId allocate_page(void);
 Page read_page(PageId page_id);
-void write_page(PageId page_id, const Page *page);
 PageId fetch_latest(void);
 void insert_record(const void *data, uint16_t length);
 
