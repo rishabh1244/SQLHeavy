@@ -9,38 +9,51 @@ typedef struct {
 } record;
 
 int main(void) {
-  int value = 112;
-
   record r1;
   r1.age = 12;
-  strcpy(r1.name, "Sizuka2");
+  strcpy(r1.name, "Sizuka");
 
-  // insert_record(&value, sizeof(value));
-  // insert_record(&r1, sizeof(r1));
+  record r2;
+  r2.age = 25;
+  strcpy(r2.name, "Nobita");
 
-  PageId latest = fetch_latest();
-  Page page = read_page(latest);
+  record r3;
+  r3.age = 31;
+  strcpy(r3.name, "Gian");
 
-  printf("latest page id : %u\n", (unsigned)latest);
+  insert_record(&r1, sizeof(r1));
+  insert_record(&r2, sizeof(r2));
+  insert_record(&r3, sizeof(r3));
+
+  PageId page_id = fetch_latest();
+  Page page = read_page(page_id);
+
+  printf("latest page id : %u\n", (unsigned)page_id);
   printf("page_id         : %u\n", (unsigned)page.header.page_id);
   printf("num_slots       : %u\n", (unsigned)page.header.num_slots);
   printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
   printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
 
-  // records are packed back-to-back starting at page.data[0]
-  // (= (uint8_t *)&page + sizeof(PageHeader)); walk them by size
-  size_t offset = 3;
+  // records are packed back-to-back from page.data[0] up to free_space_start;
+  // every record on this page is a `record`, so walk them with a fixed stride
+  printf("records on page %u:\n", (unsigned)page_id);
 
-  int out_value = 0;
-  memcpy(&out_value, page.data + offset, sizeof(out_value));
-  offset += sizeof(out_value);
+  size_t offset = 0;
+  size_t data_end = page.header.free_space_start - sizeof(PageHeader);
 
-  record out_record = {};
-  memcpy(&out_record, page.data + offset, sizeof(out_record));
+  for (uint16_t i = 0; i < page.header.num_slots; i++) {
+    if (offset + sizeof(record) > data_end) {
+      printf("  [%u] <corrupt: runs past free_space_start>\n", (unsigned)i);
+      break;
+    }
 
-  printf("value: %d\n", out_value);
-  printf("name : %s\n", out_record.name);
-  printf("age  : %u\n", (unsigned)out_record.age);
+    record r = {};
+    memcpy(&r, page.data + offset, sizeof(r));
+    offset += sizeof(r);
+
+    printf("  [%u] name=%-10s age=%u\n", (unsigned)i, r.name,
+           (unsigned)r.age);
+  }
 
   return 0;
 }
