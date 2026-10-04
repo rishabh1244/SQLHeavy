@@ -13,34 +13,71 @@ Database *new_db(const char *name) {
   }
 
   snprintf(db->name, sizeof(db->name), "%s", name ? name : "");
+
+  if (catalogue_create(db->name) != 0) {
+    free(db);
+    return NULL;
+  }
+
+  db->catalogue = catalogue_load(db->name);
+  if (db->catalogue == NULL) {
+    free(db);
+    return NULL;
+  }
+
   return db;
 }
 
-Table *new_table(Database *db, const char *name) {
-  if (db == NULL || db->table_count >= MAX_TABLES) {
-    return NULL;
+void close_db(Database *db) {
+  if (db == NULL) {
+    return;
   }
 
-  Table *table = &db->tables[db->table_count];
-  snprintf(table->name, sizeof(table->name), "%s", name ? name : "");
-  db->table_count++;
-  return table;
+  catalogue_free(db->catalogue);
+  free(db);
 }
 
-Table *find_table(Database *db, const char *name) {
-  if (db == NULL || name == NULL) {
+TableMetadata *new_table(Database *db, const char *name,
+                         const ColumnMetadata *columns,
+                         uint16_t column_count) {
+  if (db == NULL || db->catalogue == NULL || name == NULL) {
+    return NULL;
+  }
+  if (db->catalogue->table_count >= MAX_TABLES || column_count > MAX_COLUMNS) {
     return NULL;
   }
 
-  for (int i = 0; i < db->table_count; i++) {
-    if (strcmp(db->tables[i].name, name) == 0) {
-      return &db->tables[i];
+  TableMetadata meta = {};
+  snprintf(meta.name, sizeof(meta.name), "%s", name);
+  meta.column_count = column_count;
+  if (columns != NULL && column_count > 0) {
+    memcpy(meta.columns, columns, column_count * sizeof(ColumnMetadata));
+  }
+
+  if (catalogue_put(db->name, &meta) != 0) {
+    return NULL; // duplicate table name
+  }
+
+  TableMetadata *stored = &db->catalogue->tables[db->catalogue->table_count];
+  *stored = meta;
+  db->catalogue->table_count++;
+  return stored;
+}
+
+TableMetadata *find_table(Database *db, const char *name) {
+  if (db == NULL || db->catalogue == NULL || name == NULL) {
+    return NULL;
+  }
+
+  for (uint16_t i = 0; i < db->catalogue->table_count; i++) {
+    if (strcmp(db->catalogue->tables[i].name, name) == 0) {
+      return &db->catalogue->tables[i];
     }
   }
   return NULL;
 }
 
-// points page_manager at data/<db>/<table>.dat, then appends the record
+// points page_manager at data/<db>/tables/<table>.dat, then appends the record
 int db_insert_record(Database *db, const char *table_name, const void *data,
                      uint16_t length) {
   if (find_table(db, table_name) == NULL) {

@@ -8,48 +8,82 @@
 #include <unistd.h>
 
 static char g_db_name[64];
-static char g_table_name[64];
+static char g_path[256];
 
+// ../data/<db_name>/tables/<table_name>.dat
 void set_target(const char *db_name, const char *table_name) {
   snprintf(g_db_name, sizeof(g_db_name), "%s", db_name ? db_name : "");
-  snprintf(g_table_name, sizeof(g_table_name), "%s",
+  snprintf(g_path, sizeof(g_path), "../data/%s/tables/%s.dat", g_db_name,
            table_name ? table_name : "");
 }
 
-// ../data/<db_name>/<table_name>.dat
-static void table_path(char *out, size_t size) {
-  snprintf(out, size, "../data/%s/%s.dat", g_db_name, g_table_name);
+// ../data/<db_name>/catalog.dat
+void set_catalogue_target(const char *db_name) {
+  snprintf(g_db_name, sizeof(g_db_name), "%s", db_name ? db_name : "");
+  snprintf(g_path, sizeof(g_path), "../data/%s/catalog.dat", g_db_name);
 }
 
-int target_exists(void) {
-  char fileName[256];
+int target_exists(void) { return access(g_path, F_OK) == 0; }
 
-  table_path(fileName, sizeof(fileName));
-  return access(fileName, F_OK) == 0;
-}
-
-PageId allocate_page(void) {
+// ../data, ../data/<db_name>, ../data/<db_name>/tables
+static int make_dirs(void) {
   char dirName[256];
-  char fileName[256];
 
   if (mkdir("../data", 0755) != 0 && errno != EEXIST) {
     perror("mkdir ../data");
-    return (PageId)-1;
+    return -1;
   }
 
   snprintf(dirName, sizeof(dirName), "../data/%s", g_db_name);
-
   if (mkdir(dirName, 0755) != 0 && errno != EEXIST) {
     perror("mkdir");
+    return -1;
+  }
+
+  snprintf(dirName, sizeof(dirName), "../data/%s/tables", g_db_name);
+  if (mkdir(dirName, 0755) != 0 && errno != EEXIST) {
+    perror("mkdir");
+    return -1;
+  }
+
+  return 0;
+}
+
+int create_page_file(void) {
+  if (make_dirs() != 0) {
+    return -1;
+  }
+
+  if (target_exists()) {
+    return 0;
+  }
+
+  FILE *file = fopen(g_path, "w+b");
+  if (file == NULL) {
+    perror("fopen");
+    return -1;
+  }
+
+  fileHeader file_head = {.page_count = 0, .page_size = PAGE_SIZE};
+  int ok = fwrite(&file_head, sizeof(fileHeader), 1, file) == 1;
+  fclose(file);
+
+  if (!ok) {
+    perror("fwrite");
+    return -1;
+  }
+  return 0;
+}
+
+PageId allocate_page(void) {
+  if (make_dirs() != 0) {
     return (PageId)-1;
   }
 
-  table_path(fileName, sizeof(fileName));
-
-  FILE *file = fopen(fileName, "r+b");
+  FILE *file = fopen(g_path, "r+b");
 
   if (file == NULL) {
-    file = fopen(fileName, "w+b");
+    file = fopen(g_path, "w+b");
   }
 
   if (file == NULL) {
@@ -100,10 +134,7 @@ PageId allocate_page(void) {
 }
 
 Page read_page(PageId page_id) {
-  char fileName[256];
-
-  table_path(fileName, sizeof(fileName));
-  FILE *file = fopen(fileName, "rb");
+  FILE *file = fopen(g_path, "rb");
 
   Page page = {};
   if (file == NULL) {
@@ -132,11 +163,7 @@ Page read_page(PageId page_id) {
 // returns the id of the newest page, (PageId)-1 when there is no page yet
 PageId fetch_latest(void) {
   // reads file header
-  char fileName[256];
-
-  table_path(fileName, sizeof(fileName));
-
-  FILE *file = fopen(fileName, "rb");
+  FILE *file = fopen(g_path, "rb");
   if (file == NULL) {
     perror("file not present");
     return (PageId)-1;
@@ -195,10 +222,7 @@ void insert_record(const void *data, uint16_t length) {
   page.header.num_slots += 1;
   page.header.free_space_end -= sizeof(Slot);
 
-  char fileName[256];
-  table_path(fileName, sizeof(fileName));
-
-  FILE *file = fopen(fileName, "r+b");
+  FILE *file = fopen(g_path, "r+b");
   if (file == NULL) {
     perror("file not present");
     return;

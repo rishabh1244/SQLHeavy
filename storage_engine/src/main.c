@@ -1,6 +1,7 @@
 #include "page_manager.h"
 #include "storage.h"
 
+#include <stddef.h>
 #include <stdio.h>
 
 typedef struct {
@@ -10,7 +11,34 @@ typedef struct {
 
 int main(void) {
   Database *db = new_db("TEST_DB");
-  new_table(db, "PEOPLE");
+  if (db == NULL) {
+    printf("failed to create database\n");
+    return 1;
+  }
+
+  ColumnMetadata columns[] = {
+      {"age", TYPE_UINT16, (uint16_t)offsetof(record, age), sizeof(uint16_t)},
+      {"name", TYPE_STRING, (uint16_t)offsetof(record, name),
+       sizeof(((record *)0)->name)},
+  };
+
+  TableMetadata *people = new_table(db, "PEOPLE", columns, 2);
+  if (people == NULL) {
+    people = find_table(db, "PEOPLE"); // already in catalog.dat
+  }
+  if (people == NULL) {
+    printf("no PEOPLE table\n");
+    close_db(db);
+    return 1;
+  }
+
+  printf("table %s (%u columns)\n", people->name, people->column_count);
+  for (uint16_t i = 0; i < people->column_count; i++) {
+    printf("  %-6s type=%u offset=%u length=%u\n", people->columns[i].name,
+           (unsigned)people->columns[i].type, people->columns[i].offset,
+           people->columns[i].length);
+  }
+
   record r1 = {12, "Sizuka"};
   record r2 = {25, "Nobita"};
   record r3 = {31, "Gian"};
@@ -44,5 +72,6 @@ int main(void) {
            r.name, (unsigned)r.age);
   }
 
+  close_db(db);
   return 0;
 }

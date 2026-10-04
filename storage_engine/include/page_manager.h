@@ -31,10 +31,16 @@ Responsibilities:
 
 typedef uint32_t PageId;
 
-// will contain as a folder/file
-// data/<db_name>/<table_name>.dat
-// must be set (by storage.c) before any page operation
+// file layout
+//   data/<db_name>/catalog.dat            -> catalogue records
+//   data/<db_name>/tables/<table_name>.dat -> table records
+// must be set (by storage.c / catalog.c) before any page operation
 void set_target(const char *db_name, const char *table_name);
+void set_catalogue_target(const char *db_name);
+
+// creates the directories of the current target and an empty page file
+// (returns 0 when the file already exists or was created)
+int create_page_file(void);
 
 typedef struct {
   PageId page_id;
