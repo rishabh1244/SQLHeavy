@@ -5,6 +5,7 @@ LIB_SRC = $(filter-out src/main.c, $(wildcard src/*.c))
 HDR = $(wildcard include/*.h)
 LIB = libdatabase.so
 BIN = db
+RS = main
 
 # default target builds the shared library, no .o files are left behind
 all: $(LIB)
@@ -19,7 +20,11 @@ $(BIN): src/main.c $(LIB_SRC) $(HDR)
 run: $(BIN)
 	./$(BIN)
 
-clean:
-	rm -f $(LIB) $(BIN) a.out *.o src/*.o
+# rust client:  rustc main.rs -L . -l database   (binary: ./main)
+rust: $(LIB)
+	rustc main.rs -L . -l database -C link-arg=-Wl,-rpath,'$$ORIGIN'
 
-.PHONY: all run clean
+clean:
+	rm -f $(LIB) $(BIN) $(RS) a.out *.o src/*.o
+
+.PHONY: all run rust clean
