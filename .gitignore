@@ -1,2 +1,5 @@
 query_processing/target/
 query_processing/Cargo.lock
+*.o
+a.out
+/storage_engine/db

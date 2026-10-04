@@ -1,22 +1,20 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -Wextra -g -Iinclude
 
-TARGET = db
-SRCS = main.c storage.c page_manager.c
-OBJS = $(SRCS:.c=.o)
+SRC = $(wildcard src/*.c)
+HDR = $(wildcard include/*.h)
+BIN = db
 
-all: $(TARGET)
+# compile + link in one step, so no .o files are left behind
+all: $(BIN)
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS)
+$(BIN): $(SRC) $(HDR)
+	$(CC) $(CFLAGS) -o $@ $(SRC)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-run: $(TARGET)
-	./$(TARGET)
+run: $(BIN)
+	./$(BIN)
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(BIN) a.out *.o src/*.o
 
 .PHONY: all run clean
