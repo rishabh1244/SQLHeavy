@@ -56,6 +56,17 @@ typedef struct {
   PageHeader header;
   uint8_t data[PAGE_SIZE - sizeof(PageHeader)];
 } Page;
+typedef struct {
+  uint16_t offset;
+  uint16_t length;
+} Slot;
+
+// slot i lives at the tail of the page; it knows where record i is
+static inline Slot get_slot(const Page *page, uint16_t i) {
+  const Slot *s = (const Slot *)((const uint8_t *)page + PAGE_SIZE -
+                                 (i + 1) * sizeof(Slot));
+  return *s;
+}
 
 // page_id,num_slots,free_space_start,free_space_end\n
 #define HEADER_STRING_MAX 64
@@ -64,5 +75,7 @@ PageId allocate_page(void);
 Page read_page(PageId page_id);
 PageId fetch_latest(void);
 void insert_record(const void *data, uint16_t length);
+uint16_t fetch_record(const Page *page, uint16_t index, void *out,
+                      uint16_t max);
 
 #endif

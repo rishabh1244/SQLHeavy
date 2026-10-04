@@ -146,8 +146,9 @@ void insert_record(const void *data, uint16_t length) {
   }
 
   // no page yet, unreadable page, or page full -> append a fresh page
+  // (each insert needs room for the record AND its slot entry)
   if (page_id == (PageId)-1 || page.header.page_id != page_id ||
-      (size_t)page.header.free_space_start + length >
+      (size_t)page.header.free_space_start + length + sizeof(Slot) >
           (size_t)page.header.free_space_end) {
     page_id = allocate_page();
     if (page_id == (PageId)-1) {
@@ -162,10 +163,18 @@ void insert_record(const void *data, uint16_t length) {
     return;
   }
 
-  memcpy((uint8_t *)&page + page.header.free_space_start, data, length);
+  // records grow up from the header, slots grow down from the page tail
+  uint16_t rec_offset = page.header.free_space_start;
+  memcpy((uint8_t *)&page + rec_offset, data, length);
+
+  Slot *slot = (Slot *)((uint8_t *)&page + PAGE_SIZE -
+                        (page.header.num_slots + 1) * sizeof(Slot));
+  slot->offset = rec_offset;
+  slot->length = length;
 
   page.header.free_space_start += length;
   page.header.num_slots += 1;
+  page.header.free_space_end -= sizeof(Slot);
 
   char fileName[256];
   snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
@@ -184,4 +193,24 @@ void insert_record(const void *data, uint16_t length) {
   }
 
   fclose(file);
+}
+
+// array access: fetch_record(&page, 0, &r, sizeof(r)) -> record 0
+// copies min(record_length, max) bytes into out, returns the record's length
+// (0 = bad index or bad slot)
+uint16_t fetch_record(const Page *page, uint16_t index, void *out,
+                      uint16_t max) {
+  if (index >= page->header.num_slots) {
+    return 0;
+  }
+
+  Slot s = get_slot(page, index);
+  if (s.offset < sizeof(PageHeader) ||
+      (size_t)s.offset + s.length > page->header.free_space_start) {
+    return 0;
+  }
+
+  uint16_t len = s.length < max ? s.length : max;
+  memcpy(out, (const uint8_t *)page + s.offset, len);
+  return s.length;
 }

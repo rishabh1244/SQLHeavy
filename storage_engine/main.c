@@ -34,26 +34,21 @@ int main(void) {
   printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
   printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
 
-  // records are packed back-to-back from page.data[0] up to free_space_start;
-  // every record on this page is a `record`, so walk them with a fixed stride
+  // fetch records like an array: fetch_record(&page, i, ...)
   printf("records on page %u:\n", (unsigned)page_id);
 
-  size_t offset = 0;
-  size_t data_end = page.header.free_space_start - sizeof(PageHeader);
+  // for (uint16_t i = 0; i < page.header.num_slots; i++) {
+  int i = 2;
+  record r = {};
+  uint16_t len = fetch_record(&page, i, &r, sizeof(r));
 
-  for (uint16_t i = 0; i < page.header.num_slots; i++) {
-    if (offset + sizeof(record) > data_end) {
-      printf("  [%u] <corrupt: runs past free_space_start>\n", (unsigned)i);
-      break;
-    }
-
-    record r = {};
-    memcpy(&r, page.data + offset, sizeof(r));
-    offset += sizeof(r);
-
-    printf("  [%u] name=%-10s age=%u\n", (unsigned)i, r.name,
-           (unsigned)r.age);
+  if (len == 0) {
+    printf("  [%u] <bad slot>\n", (unsigned)i);
   }
+
+  printf("  [%u] len=%-3u name=%-10s age=%u\n", (unsigned)i, (unsigned)len,
+         r.name, (unsigned)r.age);
+  //}
 
   return 0;
 }
