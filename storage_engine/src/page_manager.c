@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 static char g_db_name[64];
 static char g_table_name[64];
@@ -18,6 +19,13 @@ void set_target(const char *db_name, const char *table_name) {
 // ../data/<db_name>/<table_name>.dat
 static void table_path(char *out, size_t size) {
   snprintf(out, size, "../data/%s/%s.dat", g_db_name, g_table_name);
+}
+
+int target_exists(void) {
+  char fileName[256];
+
+  table_path(fileName, sizeof(fileName));
+  return access(fileName, F_OK) == 0;
 }
 
 PageId allocate_page(void) {

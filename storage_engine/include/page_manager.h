@@ -76,5 +76,7 @@ PageId fetch_latest(void);
 void insert_record(const void *data, uint16_t length);
 uint16_t fetch_record(const Page *page, uint16_t index, void *out,
                       uint16_t max);
+// 1 when data/<db>/<table>.dat exists for the current target
+int target_exists(void);
 
 #endif

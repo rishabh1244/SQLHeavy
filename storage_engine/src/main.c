@@ -2,7 +2,6 @@
 #include "storage.h"
 
 #include <stdio.h>
-#include <string.h>
 
 typedef struct {
   uint16_t age;

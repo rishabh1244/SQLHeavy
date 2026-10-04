@@ -1,0 +1,24 @@
+#ifndef SCAN_H
+#define SCAN_H
+
+#include <stdint.h>
+
+typedef struct {
+  const uint8_t *data;
+  uint32_t len;
+} RawRecord;
+
+typedef struct {
+  RawRecord *records;
+  uint32_t count;
+} ScanBatch;
+
+// loads every record of data/<db_name>/<table_name>.dat into memory
+// returns 0 on success, -1 on unknown db/table or corrupt page
+// an existing but empty table gives count == 0, records == NULL
+int scan_table(const char *db_name, const char *table_name, ScanBatch *out);
+
+// releases everything owned by the batch and zeroes it
+void scan_batch_free(ScanBatch *batch);
+
+#endif
