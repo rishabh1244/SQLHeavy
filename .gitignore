@@ -3,3 +3,5 @@ query_processing/Cargo.lock
 *.o
 a.out
 /storage_engine/db
+/storage_engine/libdatabase.so
+/storage_engine/main
