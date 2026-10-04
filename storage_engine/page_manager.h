@@ -31,11 +31,10 @@ Responsibilities:
 
 typedef uint32_t PageId;
 
-#define DB_NAME "TEST_DB"
-#define TABLE_NAME "TEST_TABLE"
-
 // will contain as a folder/file
-// data/DB_NAME/TABLE_NAME.dat
+// data/<db_name>/<table_name>.dat
+// must be set (by storage.c) before any page operation
+void set_target(const char *db_name, const char *table_name);
 
 typedef struct {
   PageId page_id;

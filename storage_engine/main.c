@@ -1,4 +1,5 @@
 #include "page_manager.h"
+#include "storage.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -9,21 +10,17 @@ typedef struct {
 } record;
 
 int main(void) {
-  record r1;
-  r1.age = 12;
-  strcpy(r1.name, "Sizuka");
+  Database *db = new_db("TEST_DB");
+  new_table(db, "PEOPLE");
+  record r1 = {12, "Sizuka"};
+  record r2 = {25, "Nobita"};
+  record r3 = {31, "Gian"};
 
-  record r2;
-  r2.age = 25;
-  strcpy(r2.name, "Nobita");
+  db_insert_record(db, "PEOPLE", &r1, sizeof(r1));
+  db_insert_record(db, "PEOPLE", &r2, sizeof(r2));
+  db_insert_record(db, "PEOPLE", &r3, sizeof(r3));
 
-  record r3;
-  r3.age = 31;
-  strcpy(r3.name, "Gian");
-
-  insert_record(&r1, sizeof(r1));
-  insert_record(&r2, sizeof(r2));
-  insert_record(&r3, sizeof(r3));
+  set_target(db->name, "PEOPLE");
 
   PageId page_id = fetch_latest();
   Page page = read_page(page_id);
@@ -34,21 +31,19 @@ int main(void) {
   printf("free_space_start: %u\n", (unsigned)page.header.free_space_start);
   printf("free_space_end  : %u\n", (unsigned)page.header.free_space_end);
 
-  // fetch records like an array: fetch_record(&page, i, ...)
   printf("records on page %u:\n", (unsigned)page_id);
 
-  // for (uint16_t i = 0; i < page.header.num_slots; i++) {
-  int i = 2;
-  record r = {};
-  uint16_t len = fetch_record(&page, i, &r, sizeof(r));
+  for (uint16_t i = 0; i < page.header.num_slots; i++) {
+    record r = {};
+    uint16_t len = fetch_record(&page, i, &r, sizeof(r));
 
-  if (len == 0) {
-    printf("  [%u] <bad slot>\n", (unsigned)i);
+    if (len == 0) {
+      printf("  [%u] <bad slot>\n", (unsigned)i);
+      continue;
+    }
+    printf("  [%u] len=%-3u name=%-10s age=%u\n", (unsigned)i, (unsigned)len,
+           r.name, (unsigned)r.age);
   }
-
-  printf("  [%u] len=%-3u name=%-10s age=%u\n", (unsigned)i, (unsigned)len,
-         r.name, (unsigned)r.age);
-  //}
 
   return 0;
 }

@@ -6,6 +6,20 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+static char g_db_name[64];
+static char g_table_name[64];
+
+void set_target(const char *db_name, const char *table_name) {
+  snprintf(g_db_name, sizeof(g_db_name), "%s", db_name ? db_name : "");
+  snprintf(g_table_name, sizeof(g_table_name), "%s",
+           table_name ? table_name : "");
+}
+
+// ../data/<db_name>/<table_name>.dat
+static void table_path(char *out, size_t size) {
+  snprintf(out, size, "../data/%s/%s.dat", g_db_name, g_table_name);
+}
+
 PageId allocate_page(void) {
   char dirName[256];
   char fileName[256];
@@ -15,15 +29,14 @@ PageId allocate_page(void) {
     return (PageId)-1;
   }
 
-  snprintf(dirName, sizeof(dirName), "../data/%s", DB_NAME);
+  snprintf(dirName, sizeof(dirName), "../data/%s", g_db_name);
 
   if (mkdir(dirName, 0755) != 0 && errno != EEXIST) {
     perror("mkdir");
     return (PageId)-1;
   }
 
-  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
-           TABLE_NAME);
+  table_path(fileName, sizeof(fileName));
 
   FILE *file = fopen(fileName, "r+b");
 
@@ -81,8 +94,7 @@ PageId allocate_page(void) {
 Page read_page(PageId page_id) {
   char fileName[256];
 
-  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
-           TABLE_NAME);
+  table_path(fileName, sizeof(fileName));
   FILE *file = fopen(fileName, "rb");
 
   Page page = {};
@@ -114,8 +126,7 @@ PageId fetch_latest(void) {
   // reads file header
   char fileName[256];
 
-  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
-           TABLE_NAME);
+  table_path(fileName, sizeof(fileName));
 
   FILE *file = fopen(fileName, "rb");
   if (file == NULL) {
@@ -177,8 +188,7 @@ void insert_record(const void *data, uint16_t length) {
   page.header.free_space_end -= sizeof(Slot);
 
   char fileName[256];
-  snprintf(fileName, sizeof(fileName), "../data/%s/%s.dat", DB_NAME,
-           TABLE_NAME);
+  table_path(fileName, sizeof(fileName));
 
   FILE *file = fopen(fileName, "r+b");
   if (file == NULL) {
