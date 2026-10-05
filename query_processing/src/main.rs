@@ -1,7 +1,11 @@
+// query processor front-end, talks to the C engine (storage_engine/libdatabase.so)
+//   rustc src/main.rs -L ../storage_engine -l database
+//   LD_LIBRARY_PATH=../storage_engine ./main
+
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 
-const TYPE_UINT16: c_int = 0;
+const TYPE_INT32: c_int = 1;
 const TYPE_STRING: c_int = 4;
 
 #[repr(C)]
@@ -37,17 +41,16 @@ pub struct Catalogue {
     pub tables: [TableMetadata; 128],
 }
 
-// opaque handle, layout lives on the C side
 #[repr(C)]
 pub struct Database {
     _private: [u8; 0],
 }
 
-// typedef struct { uint16_t age; char name[23]; } record;  -> 26 bytes
+// typedef struct { int32_t id; char name[16]; } user;  -> 20 bytes
 #[repr(C)]
-pub struct Person {
-    pub age: u16,
-    pub name: [u8; 23],
+pub struct User {
+    pub id: i32,
+    pub name: [u8; 16],
 }
 
 unsafe extern "C" {
@@ -60,8 +63,6 @@ unsafe extern "C" {
         columns: *const ColumnMetadata,
         column_count: u16,
     ) -> *mut TableMetadata;
-
-    fn find_table(db: *mut Database, name: *const c_char) -> *mut TableMetadata;
 
     fn db_insert_record(
         db: *mut Database,
@@ -77,40 +78,105 @@ unsafe extern "C" {
     fn catalogue_free(catalogue: *mut Catalogue);
 }
 
-/*
+fn c_field(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+fn fill<const N: usize>(dst: &mut [u8; N], src: &str) {
+    let bytes = src.as_bytes();
+    let n = bytes.len().min(N - 1);
+    dst[..n].copy_from_slice(&bytes[..n]);
+}
+
+fn column(name: &str, type_: c_int, offset: u16, length: u16) -> ColumnMetadata {
+    let mut col = ColumnMetadata {
+        name: [0; 32],
+        type_,
+        offset,
+        length,
+    };
+    fill(&mut col.name, name);
+    col
+}
+
+fn user(id: i32, name: &str) -> User {
+    let mut u = User { id, name: [0; 16] };
+    fill(&mut u.name, name);
+    u
+}
+
+fn insert(db: *mut Database, table: &CString) {
+    let users = [user(1, "Alice"), user(2, "Bob"), user(3, "Charlie")];
+
+    for u in &users {
+        unsafe {
+            db_insert_record(
+                db,
+                table.as_ptr(),
+                u as *const User as *const c_void,
+                std::mem::size_of::<User>() as u16,
+            );
+        }
+    }
+}
+
+fn fetch(db_name: &CString, table: &CString) {
+    let mut batch = ScanBatch {
+        records: std::ptr::null_mut(),
+        count: 0,
+    };
+    unsafe { scan_table(db_name.as_ptr(), table.as_ptr(), &mut batch) };
+
+    println!("{} rows in {}", batch.count, table.to_str().unwrap());
+    if batch.count > 0 {
+        let records = unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
+
+        for (i, rec) in records.iter().enumerate() {
+            let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
+            let id = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            println!("[{}] id={} name={}", i, id, c_field(&bytes[4..20]));
+        }
+    }
+    unsafe { scan_batch_free(&mut batch) };
+
+    let cat_ptr = unsafe { catalogue_load(db_name.as_ptr()) };
+    let cat = unsafe { &*cat_ptr };
+
+    println!("catalogue: {} tables", cat.table_count);
+    for i in 0..cat.table_count as usize {
+        let t = &cat.tables[i];
+        print!("  {} ({} cols)", c_field(&t.name), t.column_count);
+
+        for j in 0..t.column_count as usize {
+            let c = &t.columns[j];
+            print!(
+                " | {} type={} off={} len={}",
+                c_field(&c.name),
+                c.type_,
+                c.offset,
+                c.length
+            );
+        }
+        println!();
+    }
+    unsafe { catalogue_free(cat_ptr) };
+}
 
 fn main() {
-    let path = CString::new("mydb").unwrap();
+    let db_name = CString::new("TEST_DB").unwrap();
+    let table = CString::new("USERS").unwrap();
 
-    let db = unsafe { db_open(path.as_ptr()) };
+    let db = unsafe { new_db(db_name.as_ptr()) };
 
-    let table = CString::new("users").unwrap();
-
-    let mut request = ScanRequest {
-        table_name: table.as_ptr(),
-    };
-
-    let mut rows = vec![
-        Row {
-            data: std::ptr::null(),
-            len: 0,
-        };
-        100
+    let columns = [
+        column("id", TYPE_INT32, 0, 4),
+        column("name", TYPE_STRING, 4, 16),
     ];
+    unsafe { new_table(db, table.as_ptr(), columns.as_ptr(), columns.len() as u16) };
 
-    let mut count = 0;
+    insert(db, &table);
+    fetch(&db_name, &table);
 
-    let result = unsafe { db_scan(db, &mut request, rows.as_mut_ptr(), rows.len(), &mut count) };
-
-    assert_eq!(result, 0);
-
-    for row in &rows[..count] {
-        let bytes = unsafe { std::slice::from_raw_parts(row.data as *const u8, row.len) };
-
-        println!("{}", String::from_utf8_lossy(bytes));
-    }
-
-    unsafe {
-        db_close(db);
-    }
-}*/
+    unsafe { close_db(db) };
+}

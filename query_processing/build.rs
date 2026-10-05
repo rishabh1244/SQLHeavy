@@ -1,31 +1,11 @@
-use std::ffi::{CString, c_char};
+fn main() {
+    // libdatabase.so lives in <repo>/lib (copied there by the top level Makefile)
+    let dir = std::fs::canonicalize("../lib").unwrap_or_else(|_| "../lib".into());
 
-#[repr(C)]
-pub struct Database {
-    _private: [u8; 0],
-}
+    println!("cargo:rustc-link-search=native={}", dir.display());
+    println!("cargo:rustc-link-lib=dylib=database");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
 
-#[repr(C)]
-pub struct ScanRequest {
-    pub table_name: *const c_char,
-}
-
-#[repr(C)]
-pub struct Row {
-    pub data: *const c_char,
-    pub len: usize,
-}
-
-unsafe extern "C" {
-    fn db_open(path: *const c_char) -> *mut Database;
-
-    fn db_scan(
-        db: *mut Database,
-        request: *mut ScanRequest,
-        rows: *mut Row,
-        capacity: usize,
-        count: *mut usize,
-    ) -> i32;
-
-    fn db_close(db: *mut Database);
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../lib/libdatabase.so");
 }

@@ -2,10 +2,9 @@
 name = "query_processing"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
-[build-dependencies]
-cc = "1"
-
-[dependencies]
-datafusion = "55.1.0"
-tokio = { version = "1.0", features = ["rt-multi-thread"] }
+# no crates needed: std + libdatabase.so (copied to <repo>/lib by the Makefile)
+# [dependencies]
+# datafusion = "55.1.0"
+# tokio = { version = "1.0", features = ["rt-multi-thread"] }
