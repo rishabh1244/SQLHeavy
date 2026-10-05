@@ -50,6 +50,33 @@ pub struct Person {
     pub name: [u8; 23],
 }
 
+unsafe extern "C" {
+    fn new_db(name: *const c_char) -> *mut Database;
+    fn close_db(db: *mut Database);
+
+    fn new_table(
+        db: *mut Database,
+        name: *const c_char,
+        columns: *const ColumnMetadata,
+        column_count: u16,
+    ) -> *mut TableMetadata;
+
+    fn find_table(db: *mut Database, name: *const c_char) -> *mut TableMetadata;
+
+    fn db_insert_record(
+        db: *mut Database,
+        table_name: *const c_char,
+        data: *const c_void,
+        length: u16,
+    ) -> c_int;
+
+    fn scan_table(db_name: *const c_char, table_name: *const c_char, out: *mut ScanBatch) -> c_int;
+    fn scan_batch_free(batch: *mut ScanBatch);
+
+    fn catalogue_load(db_name: *const c_char) -> *mut Catalogue;
+    fn catalogue_free(catalogue: *mut Catalogue);
+}
+
 /*
 
 fn main() {
