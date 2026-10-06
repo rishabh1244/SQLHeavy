@@ -2,6 +2,9 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 
 const TYPE_UINT16: c_int = 0;
+const TYPE_INT32: c_int = 1;
+const TYPE_INT64: c_int = 2;
+const TYPE_FLOAT64: c_int = 3;
 const TYPE_STRING: c_int = 4;
 
 #[repr(C)]
@@ -82,6 +85,54 @@ fn c_field(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
+fn type_width(type_: c_int) -> usize {
+    match type_ {
+        TYPE_UINT16 => 2,
+        TYPE_INT32 => 4,
+        TYPE_INT64 | TYPE_FLOAT64 => 8,
+        _ => 0,
+    }
+}
+
+fn decode_value(type_: c_int, raw: &[u8]) -> String {
+    match type_ {
+        TYPE_STRING => c_field(raw),
+        t if raw.len() < type_width(t) => format!("<short: {} < {} bytes>", raw.len(), type_width(t)),
+        TYPE_UINT16 => u16::from_le_bytes(word(raw)).to_string(),
+        TYPE_INT32 => i32::from_le_bytes(word(raw)).to_string(),
+        TYPE_INT64 => i64::from_le_bytes(word(raw)).to_string(),
+        TYPE_FLOAT64 => f64::from_le_bytes(word(raw)).to_string(),
+        t => format!("<type {}>", t),
+    }
+}
+
+// zero pads when raw is short (decode_value already rejected those cases)
+fn word<const N: usize>(raw: &[u8]) -> [u8; N] {
+    let mut out = [0u8; N];
+    let n = raw.len().min(N);
+    out[..n].copy_from_slice(&raw[..n]);
+    out
+}
+
+// every field name/offset/type comes from the catalogue, never from rust code
+fn decode_record(meta: &TableMetadata, bytes: &[u8]) -> String {
+    let mut parts = Vec::with_capacity(meta.column_count as usize);
+
+    for c in meta.columns.iter().take(meta.column_count as usize) {
+        let start = c.offset as usize;
+        let raw = bytes.get(start..start + c.length as usize).unwrap_or(&[]);
+        parts.push(format!("{}={}", c_field(&c.name), decode_value(c.type_, raw)));
+    }
+
+    parts.join(" ")
+}
+
+fn lookup_table<'a>(cat: &'a Catalogue, name: &str) -> Option<&'a TableMetadata> {
+    (0..cat.table_count as usize)
+        .map(|i| &cat.tables[i])
+        .find(|t| c_field(&t.name) == name)
+}
+
 fn fill<const N: usize>(dst: &mut [u8; N], src: &str) {
     let bytes = src.as_bytes();
     let n = bytes.len().min(N - 1);
@@ -157,7 +208,16 @@ fn main() {
     }
     println!("inserted {} rows", people.len());
 
-    // 4. fetch the records back
+    // 4. fetch the records back, decoded with the catalogue's column layout
+    let cat_ptr = unsafe { catalogue_load(db_name.as_ptr()) };
+    if cat_ptr.is_null() {
+        eprintln!("catalogue_load failed");
+        unsafe { close_db(db) };
+        std::process::exit(1);
+    }
+    let cat = unsafe { &*cat_ptr };
+    let meta = lookup_table(cat, table.to_str().unwrap());
+
     let mut batch = ScanBatch {
         records: std::ptr::null_mut(),
         count: 0,
@@ -171,31 +231,21 @@ fn main() {
     }
 
     println!("{} rows in {}", batch.count, table.to_str().unwrap());
-    if batch.count > 0 {
-        let records = unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
+    match meta {
+        None => eprintln!("no catalogue entry for {}", table.to_str().unwrap()),
+        Some(meta) if !batch.records.is_null() => {
+            let records = unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
 
-        for (i, rec) in records.iter().enumerate() {
-            let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
-
-            if bytes.len() < 25 {
-                println!("[{}] bad record: len={} expected 26", i, rec.len);
-                continue;
+            for (i, rec) in records.iter().enumerate() {
+                let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
+                println!("[{}] {}", i, decode_record(meta, bytes));
             }
-            let age = u16::from_le_bytes([bytes[0], bytes[1]]);
-            println!("[{}] age={} name={}", i, age, c_field(&bytes[2..25]));
         }
+        Some(_) => {}
     }
     unsafe { scan_batch_free(&mut batch) };
 
-    // 5. fetch the catalogue
-    let cat_ptr = unsafe { catalogue_load(db_name.as_ptr()) };
-    if cat_ptr.is_null() {
-        eprintln!("catalogue_load failed");
-        unsafe { close_db(db) };
-        std::process::exit(1);
-    }
-
-    let cat = unsafe { &*cat_ptr };
+    // 5. the catalogue itself
     println!("catalogue: {} tables", cat.table_count);
     for i in 0..cat.table_count as usize {
         let t = &cat.tables[i];
