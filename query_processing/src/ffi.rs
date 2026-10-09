@@ -198,8 +198,11 @@ impl Database {
         let c_db = CString::new(self.name.as_str())
             .map_err(|_| "database name contains NUL".to_string())?;
 
-        let cat_guard = load_catalogue(&c_db)?;
-        let cat = unsafe { &*cat_guard.ptr };
+        let cat_ptr = unsafe { catalogue_load(c_db.as_ptr()) };
+        if cat_ptr.is_null() {
+            return Err("catalogue_load failed".to_string());
+        }
+        let cat = unsafe { &*cat_ptr };
         let meta = lookup_table(cat, table)
             .ok_or_else(|| format!("no catalogue entry for {table}"))?;
         let id_col =
@@ -207,36 +210,46 @@ impl Database {
         let name_col =
             column_by_name(meta, "name").ok_or_else(|| format!("{table} has no name column"))?;
 
-        let mut batch = ScanGuard::new();
-        let rc = unsafe { scan_table(c_db.as_ptr(), c_table.as_ptr(), batch.as_mut_ptr()) };
-        if rc != 0 {
-            return Err(format!("scan_table({}.{}) failed: rc={rc}", self.name, table));
-        }
+        let mut batch = ScanBatch {
+            records: std::ptr::null_mut(),
+            count: 0,
+        };
+        let rc = unsafe { scan_table(c_db.as_ptr(), c_table.as_ptr(), &mut batch) };
 
-        let inner = &batch.0;
-        if inner.records.is_null() || inner.count == 0 {
-            return Ok(Vec::new());
-        }
+        let rows = if rc != 0 {
+            Err(format!("scan_table({}.{}) failed: rc={rc}", self.name, table))
+        } else if batch.records.is_null() || batch.count == 0 {
+            Ok(Vec::new())
+        } else {
+            let records =
+                unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
+            records
+                .iter()
+                .map(|rec| {
+                    let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
+                    Ok(UserRow {
+                        id: read_i32(bytes, id_col)?,
+                        name: read_str(bytes, name_col)?,
+                    })
+                })
+                .collect()
+        };
 
-        let records = unsafe { std::slice::from_raw_parts(inner.records, inner.count as usize) };
-        let mut rows = Vec::with_capacity(records.len());
-        for rec in records {
-            let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
-            rows.push(UserRow {
-                id: read_i32(bytes, id_col)?,
-                name: read_str(bytes, name_col)?,
-            });
-        }
-        Ok(rows)
+        unsafe { scan_batch_free(&mut batch) };
+        unsafe { catalogue_free(cat_ptr) };
+        rows
     }
 
     pub fn list_tables(&self) -> Result<Vec<TableInfo>, String> {
         let c_db = CString::new(self.name.as_str())
             .map_err(|_| "database name contains NUL".to_string())?;
-        let cat_guard = load_catalogue(&c_db)?;
-        let cat = unsafe { &*cat_guard.ptr };
+        let cat_ptr = unsafe { catalogue_load(c_db.as_ptr()) };
+        if cat_ptr.is_null() {
+            return Err("catalogue_load failed".to_string());
+        }
+        let cat = unsafe { &*cat_ptr };
 
-        Ok((0..cat.table_count as usize)
+        let tables = (0..cat.table_count as usize)
             .map(|i| {
                 let t = &cat.tables[i];
                 TableInfo {
@@ -254,7 +267,10 @@ impl Database {
                         .collect(),
                 }
             })
-            .collect())
+            .collect();
+
+        unsafe { catalogue_free(cat_ptr) };
+        Ok(tables)
     }
 }
 
@@ -262,47 +278,6 @@ impl Drop for Database {
     fn drop(&mut self) {
         unsafe { close_db(self.ptr) };
     }
-}
-
-// ---------- RAII guards for C allocations ----------
-
-struct ScanGuard(ScanBatch);
-
-impl ScanGuard {
-    fn new() -> Self {
-        Self(ScanBatch {
-            records: std::ptr::null_mut(),
-            count: 0,
-        })
-    }
-
-    fn as_mut_ptr(&mut self) -> *mut ScanBatch {
-        &mut self.0
-    }
-}
-
-impl Drop for ScanGuard {
-    fn drop(&mut self) {
-        unsafe { scan_batch_free(&mut self.0) };
-    }
-}
-
-struct CatalogueGuard {
-    ptr: *mut Catalogue,
-}
-
-impl Drop for CatalogueGuard {
-    fn drop(&mut self) {
-        unsafe { catalogue_free(self.ptr) };
-    }
-}
-
-fn load_catalogue(db_name: &CString) -> Result<CatalogueGuard, String> {
-    let ptr = unsafe { catalogue_load(db_name.as_ptr()) };
-    if ptr.is_null() {
-        return Err("catalogue_load failed".to_string());
-    }
-    Ok(CatalogueGuard { ptr })
 }
 
 // ---------- byte/layout helpers ----------
