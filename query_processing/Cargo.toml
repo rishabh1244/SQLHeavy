@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
-# no crates needed: std + libdatabase.so (copied to <repo>/lib by the Makefile)
-# [dependencies]
-# datafusion = "55.1.0"
-# tokio = { version = "1.0", features = ["rt-multi-thread"] }
+[dependencies]
+datafusion = "55.1.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }

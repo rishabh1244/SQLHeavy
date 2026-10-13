@@ -5,9 +5,17 @@
 
 mod ffi;
 
+use std::sync::Arc;
+
+use datafusion::arrow::array::{Int32Array, StringArray};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::MemTable;
+use datafusion::prelude::*;
 use ffi::{ColType, ColumnSpec, Database};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::open("TEST_DB")?;
 
     db.create_table(
@@ -27,6 +35,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (i, row) in rows.iter().enumerate() {
         println!("[{}] id={} name={}", i, row.id, row.name);
     }
+
+    // hand the scanned rows to datafusion as an in-memory arrow table
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+    let ids: Int32Array = rows.iter().map(|r| r.id).collect();
+    let names: StringArray = rows.iter().map(|r| Some(r.name.as_str())).collect();
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(names)])?;
+
+    let ctx = SessionContext::new();
+    ctx.register_table("USERS", Arc::new(MemTable::try_new(schema, vec![vec![batch]])?))?;
+
+    let df = ctx
+        .sql("SELECT id, name FROM USERS WHERE id > 1 ORDER BY id")
+        .await?;
+    df.show().await?;
 
     let tables = db.list_tables()?;
     println!("catalogue: {} tables", tables.len());
