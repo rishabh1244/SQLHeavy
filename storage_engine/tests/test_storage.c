@@ -25,7 +25,7 @@ user_data users[] = {
 };
 
 int main(void) {
-  Database *db = new_db("TEST_DB");
+  Database *db = new_db("TEST_DB2");
   if (db == NULL) {
     printf("failed to open database TEST_DB\n");
     return 1;
@@ -38,7 +38,9 @@ int main(void) {
   }
   ScanBatch batch;
   scan_table("TEST_DB", "users", &batch);
-
+  int n = sizeof(batch.records) / sizeof(RawRecord);
+  for (int i = 0; i < n; i++) {
+  }
   close_db(db);
   return 0;
 }
