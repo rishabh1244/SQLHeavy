@@ -78,8 +78,8 @@ int create_page_file(void) {
     return -1;
   }
 
-  fileHeader file_head = {.page_count = 0, .page_size = PAGE_SIZE};
-  int ok = fwrite(&file_head, sizeof(fileHeader), 1, file) == 1;
+  FileHeader file_head = {.page_count = 0, .page_size = PAGE_SIZE};
+  int ok = fwrite(&file_head, sizeof(FileHeader), 1, file) == 1;
   fclose(file);
 
   if (!ok) {
@@ -107,9 +107,9 @@ PageId allocate_page(void) {
   }
 
   Page page = {};
-  fileHeader file_head = {};
+  FileHeader file_head = {};
 
-  if (fread(&file_head, sizeof(fileHeader), 1, file) != 1 ||
+  if (fread(&file_head, sizeof(FileHeader), 1, file) != 1 ||
       file_head.page_size != PAGE_SIZE) {
     // no file header yet (or stale layout): start from an empty file
     file_head.page_count = 0;
@@ -125,7 +125,7 @@ PageId allocate_page(void) {
   page.header.free_space_start = sizeof(PageHeader);
   page.header.free_space_end = PAGE_SIZE;
 
-  if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(fileHeader),
+  if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(FileHeader),
             SEEK_SET) != 0) {
     perror("fseek");
     fclose(file);
@@ -138,7 +138,7 @@ PageId allocate_page(void) {
   }
 
   rewind(file);
-  if (fwrite(&file_head, sizeof(fileHeader), 1, file) != 1) {
+  if (fwrite(&file_head, sizeof(FileHeader), 1, file) != 1) {
     perror("fwrite");
     fclose(file);
     return (PageId)-1;
@@ -154,11 +154,13 @@ Page read_page(PageId page_id) {
 
   Page page = {};
   if (file == NULL) {
-    perror("file not present");
+    if (errno != ENOENT) {
+      perror("open page file");
+    }
     return page;
   }
 
-  if (fseek(file, (long)page_id * (long)PAGE_SIZE + sizeof(fileHeader),
+  if (fseek(file, (long)page_id * (long)PAGE_SIZE + sizeof(FileHeader),
             SEEK_SET) != 0) {
     perror("fseek");
     fclose(file);
@@ -177,15 +179,16 @@ Page read_page(PageId page_id) {
 
 // id of the newest page in the file, (PageId)-1 when the file has no pages
 PageId fetch_latest(void) {
-  // reads file header
   FILE *file = fopen(g_path, "rb");
   if (file == NULL) {
-    perror("file not present");
+    if (errno != ENOENT) {
+      perror("open page file");
+    }
     return (PageId)-1;
   }
 
-  fileHeader header = {};
-  if (fread(&header, sizeof(fileHeader), 1, file) != 1) {
+  FileHeader header = {};
+  if (fread(&header, sizeof(FileHeader), 1, file) != 1) {
     perror("fread");
     fclose(file);
     return (PageId)-1;
@@ -241,35 +244,15 @@ void insert_record(const void *data, uint16_t length) {
 
   FILE *file = fopen(g_path, "r+b");
   if (file == NULL) {
-    perror("file not present");
+    perror("open page file");
     return;
   }
 
-  if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(fileHeader),
+  if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(FileHeader),
             SEEK_SET) != 0 ||
       fwrite(&page, sizeof(Page), 1, file) != 1) {
     perror("write page");
   }
 
   fclose(file);
-}
-
-// array access: fetch_record(&page, 0, &r, sizeof(r)) -> record 0
-// copies min(record_length, max) bytes into out, returns the record's length
-// (0 = bad index or bad slot)
-uint16_t fetch_record(const Page *page, uint16_t index, void *out,
-                      uint16_t max) {
-  if (index >= page->header.num_slots) {
-    return 0;
-  }
-
-  Slot s = get_slot(page, index);
-  if (s.offset < sizeof(PageHeader) ||
-      (size_t)s.offset + s.length > page->header.free_space_start) {
-    return 0;
-  }
-
-  uint16_t len = s.length < max ? s.length : max;
-  memcpy(out, (const uint8_t *)page + s.offset, len);
-  return s.length;
 }

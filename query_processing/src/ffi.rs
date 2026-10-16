@@ -49,7 +49,8 @@ struct RawDatabase {
     _private: [u8; 0],
 }
 
-// typedef struct { int32_t id; char name[16]; } user;  -> 20 bytes
+// row layout the C engine stores verbatim; must match the ColumnSpec offsets
+// declared in main.rs (id @0 len 4, name @4 len 16)
 #[repr(C)]
 struct User {
     id: i32,

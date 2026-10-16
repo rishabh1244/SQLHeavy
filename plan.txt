@@ -238,9 +238,9 @@ Core operations:
     write_page(page_id, buffer)
     allocate_page()
 
-For a fixed page size (the file starts with a small fileHeader):
+For a fixed page size (the file starts with a small FileHeader):
 
-    byte_offset = sizeof(fileHeader) + page_id * PAGE_SIZE
+    byte_offset = sizeof(FileHeader) + page_id * PAGE_SIZE
 
 The rest of the database should not repeatedly call:
 

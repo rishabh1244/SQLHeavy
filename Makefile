@@ -23,7 +23,7 @@ run: rust
 
 clean:
 	$(MAKE) -C $(STORAGE) clean
-	rm -rf lib main
+	rm -rf lib
 	cd $(QP) && cargo clean
 
 .PHONY: all lib rust run clean

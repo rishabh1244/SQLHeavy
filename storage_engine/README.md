@@ -38,7 +38,7 @@ Every `.dat` file is:
 
 ```
 +-----------------------------+ offset 0
-| fileHeader                  | page_count, page_size
+| FileHeader                  | page_count, page_size
 +-----------------------------+
 | Page 0                      | sizeof(Page) bytes
 +-----------------------------+
@@ -47,7 +47,7 @@ Every `.dat` file is:
 | ...                         |
 ```
 
-Page `id` lives at `sizeof(fileHeader) + id * PAGE_SIZE`.
+Page `id` lives at `sizeof(FileHeader) + id * PAGE_SIZE`.
 
 ## Page structure
 
@@ -83,8 +83,8 @@ A page is a fixed-size **slotted page**: `PAGE_SIZE = 2400` data bytes +
 ## How pages are created
 
 1. `create_page_file()` makes the dirs and writes an **empty** file: just
-   `fileHeader { page_count = 0, page_size = PAGE_SIZE }`.
-2. `allocate_page()` reads `fileHeader`, uses `page_count` as the new id, writes
+   `FileHeader { page_count = 0, page_size = PAGE_SIZE }`.
+2. `allocate_page()` reads `FileHeader`, uses `page_count` as the new id, writes
    a zeroed page at its offset, increments `page_count`, and rewrites the header.
 3. `read_page(id)` seeks to the page offset and reads `sizeof(Page)` bytes.
 
