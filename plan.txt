@@ -182,14 +182,13 @@ CSV is useful for:
 
 But the actual database should eventually use binary page files.
 
-Example:
+Example (actual on-disk layout):
 
-    mydb/
-        catalog
-        data/
-            table_001.dat
-            table_002.dat
-            table_003.dat
+    data/
+        <db_name>/
+            catalog.dat
+            tables/
+                <table_name>.dat
 
 A table file can be divided into fixed-size pages:
 
@@ -207,11 +206,12 @@ A table file can be divided into fixed-size pages:
     | ...      |
     +----------+
 
-Start with a page size such as:
+Current page size:
 
-    PAGE_SIZE = 4096 bytes
+    PAGE_SIZE = 2400 bytes (data area) + sizeof(PageHeader) = 2412 bytes
 
-Later this can be made configurable if desired.
+The original 4096-byte target was never adopted; this can be made
+configurable later if desired.
 
 
 ============================================================
@@ -238,9 +238,9 @@ Core operations:
     write_page(page_id, buffer)
     allocate_page()
 
-For a fixed page size:
+For a fixed page size (the file starts with a small fileHeader):
 
-    byte_offset = page_id * PAGE_SIZE
+    byte_offset = sizeof(fileHeader) + page_id * PAGE_SIZE
 
 The rest of the database should not repeatedly call:
 
@@ -727,25 +727,25 @@ This allows the storage engine to be developed independently of HTTP.
 
 Do not commit too early to one exact directory structure.
 
-A possible early layout:
+Current layout:
 
-    mydb/
-        catalog/
-        data/
-            table_001.dat
-            table_002.dat
+    data/
+        <db_name>/
+            catalog.dat          (catalogue records)
+            tables/
+                <table_name>.dat (page file, one per table)
 
-Later:
+Planned additions:
 
-    mydb/
-        catalog/
-        data/
-            table_001.dat
-            table_002.dat
-        indexes/
-            table_001/
-        wal/
-            ...
+    data/
+        <db_name>/
+            catalog.dat
+            tables/
+                <table_name>.dat
+            indexes/
+                <table_name>/
+            wal/
+                ...
 
 The important abstraction is:
 

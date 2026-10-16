@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -10,37 +11,44 @@
 static char g_db_name[64];
 static char g_path[256];
 
-// ../data/<db_name>/tables/<table_name>.dat
-void set_target(const char *db_name, const char *table_name) {
-  snprintf(g_db_name, sizeof(g_db_name), "%s", db_name ? db_name : "");
-  snprintf(g_path, sizeof(g_path), "../data/%s/tables/%s.dat", g_db_name,
-           table_name ? table_name : "");
+// root of the on-disk database tree: $MYDB_DATA_DIR when set, else ../data
+static const char *data_root(void) {
+  const char *env = getenv("MYDB_DATA_DIR");
+  return (env != NULL && env[0] != '\0') ? env : "../data";
 }
 
-// ../data/<db_name>/catalog.dat
+// <root>/<db_name>/tables/<table_name>.dat
+void set_target(const char *db_name, const char *table_name) {
+  snprintf(g_db_name, sizeof(g_db_name), "%s", db_name ? db_name : "");
+  snprintf(g_path, sizeof(g_path), "%s/%s/tables/%s.dat", data_root(),
+           g_db_name, table_name ? table_name : "");
+}
+
+// <root>/<db_name>/catalog.dat
 void set_catalogue_target(const char *db_name) {
   snprintf(g_db_name, sizeof(g_db_name), "%s", db_name ? db_name : "");
-  snprintf(g_path, sizeof(g_path), "../data/%s/catalog.dat", g_db_name);
+  snprintf(g_path, sizeof(g_path), "%s/%s/catalog.dat", data_root(), g_db_name);
 }
 
 int target_exists(void) { return access(g_path, F_OK) == 0; }
 
-// ../data, ../data/<db_name>, ../data/<db_name>/tables
+// <root>, <root>/<db_name>, <root>/<db_name>/tables
 static int make_dirs(void) {
   char dirName[256];
+  const char *root = data_root();
 
-  if (mkdir("../data", 0755) != 0 && errno != EEXIST) {
-    perror("mkdir ../data");
+  if (mkdir(root, 0755) != 0 && errno != EEXIST) {
+    perror("mkdir data root");
     return -1;
   }
 
-  snprintf(dirName, sizeof(dirName), "../data/%s", g_db_name);
+  snprintf(dirName, sizeof(dirName), "%s/%s", root, g_db_name);
   if (mkdir(dirName, 0755) != 0 && errno != EEXIST) {
     perror("mkdir");
     return -1;
   }
 
-  snprintf(dirName, sizeof(dirName), "../data/%s/tables", g_db_name);
+  snprintf(dirName, sizeof(dirName), "%s/%s/tables", root, g_db_name);
   if (mkdir(dirName, 0755) != 0 && errno != EEXIST) {
     perror("mkdir");
     return -1;

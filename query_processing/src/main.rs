@@ -46,11 +46,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(names)])?;
 
     let ctx = SessionContext::new();
-    ctx.register_table("USERS", Arc::new(MemTable::try_new(schema, vec![vec![batch]])?))?;
+    ctx.register_table(
+        "USERS",
+        Arc::new(MemTable::try_new(schema, vec![vec![batch]])?),
+    )?;
 
-    let df = ctx
-        .sql("SELECT id, name FROM USERS WHERE id > 1 ORDER BY id")
-        .await?;
+    let df = ctx.sql("SELECT id, name FROM USERS ORDER BY id").await?;
     df.show().await?;
 
     let tables = db.list_tables()?;

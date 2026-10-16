@@ -4,7 +4,7 @@ query_processing/Cargo.lock
 a.out
 /storage_engine/db
 /storage_engine/libdatabase.so
-/storage_engine/main
+/storage_engine/.cache/
 /lib/
 /main
-query_processing/main
+/data/
