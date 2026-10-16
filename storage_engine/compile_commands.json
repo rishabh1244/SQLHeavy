@@ -1,18 +1,17 @@
 [
   {
-    "file": "src/main.c",
+    "file": "src/catalog.c",
     "arguments": [
       "/usr/bin/gcc",
       "-Wall",
       "-Wextra",
       "-g",
+      "-fPIC",
       "-Iinclude",
-      "-o",
-      "db",
-      "src/main.c"
+      "-c",
+      "src/catalog.c"
     ],
-    "directory": "/home/rishabh/code/database/storage_engine",
-    "output": "db"
+    "directory": "/home/rishabh/code/database/storage_engine"
   },
   {
     "file": "src/page_manager.c",
@@ -21,13 +20,12 @@
       "-Wall",
       "-Wextra",
       "-g",
+      "-fPIC",
       "-Iinclude",
-      "-o",
-      "db",
+      "-c",
       "src/page_manager.c"
     ],
-    "directory": "/home/rishabh/code/database/storage_engine",
-    "output": "db"
+    "directory": "/home/rishabh/code/database/storage_engine"
   },
   {
     "file": "src/scan.c",
@@ -36,13 +34,12 @@
       "-Wall",
       "-Wextra",
       "-g",
+      "-fPIC",
       "-Iinclude",
-      "-o",
-      "db",
+      "-c",
       "src/scan.c"
     ],
-    "directory": "/home/rishabh/code/database/storage_engine",
-    "output": "db"
+    "directory": "/home/rishabh/code/database/storage_engine"
   },
   {
     "file": "src/storage.c",
@@ -51,12 +48,11 @@
       "-Wall",
       "-Wextra",
       "-g",
+      "-fPIC",
       "-Iinclude",
-      "-o",
-      "db",
+      "-c",
       "src/storage.c"
     ],
-    "directory": "/home/rishabh/code/database/storage_engine",
-    "output": "db"
+    "directory": "/home/rishabh/code/database/storage_engine"
   }
 ]

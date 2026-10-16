@@ -1,3 +1,7 @@
+// catalog.c — "what tables exist". The catalogue is itself stored in the
+// normal page/slot record format: one TableMetadata record per table inside
+// <root>/<db>/catalog.dat. Only metadata lives here, never table rows.
+
 #include "catalog.h"
 
 #include "page_manager.h"
@@ -5,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// copies record i of the current target file into out
+// copies record i of the current target file into out, validating its slot
 static int copy_meta(const Page *page, uint16_t i, TableMetadata *out) {
   Slot s = get_slot(page, i);
 
@@ -19,6 +23,7 @@ static int copy_meta(const Page *page, uint16_t i, TableMetadata *out) {
   return 0;
 }
 
+// creates <root>/<db>/catalog.dat (header only) if it does not exist yet
 int catalogue_create(const char *db_name) {
   if (db_name == NULL) {
     return -1;
@@ -28,6 +33,7 @@ int catalogue_create(const char *db_name) {
   return create_page_file();
 }
 
+// finds one table by name by scanning every page of catalog.dat
 int catalogue_get(const char *db_name, const char *table_name,
                   TableMetadata *out) {
   if (db_name == NULL || table_name == NULL || out == NULL) {
@@ -62,6 +68,7 @@ int catalogue_get(const char *db_name, const char *table_name,
   return -1;
 }
 
+// appends one table's metadata; -1 when the name is already catalogued
 int catalogue_put(const char *db_name, const TableMetadata *meta) {
   if (db_name == NULL || meta == NULL) {
     return -1;
@@ -77,6 +84,7 @@ int catalogue_put(const char *db_name, const TableMetadata *meta) {
   return 0;
 }
 
+// reads every TableMetadata record of catalog.dat into a fresh Catalogue
 Catalogue *catalogue_load(const char *db_name) {
   if (db_name == NULL) {
     return NULL;
@@ -114,4 +122,5 @@ Catalogue *catalogue_load(const char *db_name) {
   return cat;
 }
 
+// releases a Catalogue returned by catalogue_load
 void catalogue_free(Catalogue *catalogue) { free(catalogue); }

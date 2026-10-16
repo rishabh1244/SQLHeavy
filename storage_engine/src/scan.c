@@ -1,3 +1,6 @@
+// scan.c — full table scan. Walks every page + slot of a table file and
+// copies the raw record bytes into one contiguous buffer for the caller.
+
 #include "scan.h"
 
 #include "page_manager.h"
@@ -5,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// validates slot i and writes it to out (0 when the index/slot is out of range)
 static int slot_of(const Page *page, uint16_t i, Slot *out) {
   if (i >= page->header.num_slots) {
     return 0;
@@ -20,6 +24,7 @@ static int slot_of(const Page *page, uint16_t i, Slot *out) {
   return 1;
 }
 
+// loads every record of <root>/<db>/tables/<table>.dat into memory
 int scan_table(const char *db_name, const char *table_name, ScanBatch *out) {
   if (out == NULL) {
     return -1;
@@ -102,6 +107,7 @@ int scan_table(const char *db_name, const char *table_name, ScanBatch *out) {
   return 0;
 }
 
+// releases the buffer owned by the batch
 void scan_batch_free(ScanBatch *batch) {
   if (batch == NULL) {
     return;

@@ -1,3 +1,7 @@
+// page_manager.c — the only layer that touches database files directly.
+// Owns the file header, page allocation and the slotted-page record layout.
+// Everything above this file works in Page / PageId / Slot terms.
+
 #include "page_manager.h"
 
 #include <errno.h>
@@ -30,6 +34,7 @@ void set_catalogue_target(const char *db_name) {
   snprintf(g_path, sizeof(g_path), "%s/%s/catalog.dat", data_root(), g_db_name);
 }
 
+// true when the current target file has already been created
 int target_exists(void) { return access(g_path, F_OK) == 0; }
 
 // <root>, <root>/<db_name>, <root>/<db_name>/tables
@@ -57,6 +62,7 @@ static int make_dirs(void) {
   return 0;
 }
 
+// creates the target file containing only the file header (no pages yet)
 int create_page_file(void) {
   if (make_dirs() != 0) {
     return -1;
@@ -83,6 +89,7 @@ int create_page_file(void) {
   return 0;
 }
 
+// appends a fresh zeroed page at the end of the file and returns its id
 PageId allocate_page(void) {
   if (make_dirs() != 0) {
     return (PageId)-1;
@@ -141,6 +148,7 @@ PageId allocate_page(void) {
   return page_id;
 }
 
+// reads the page with the given id; a zeroed Page is returned if it is missing
 Page read_page(PageId page_id) {
   FILE *file = fopen(g_path, "rb");
 
@@ -167,8 +175,7 @@ Page read_page(PageId page_id) {
   return page;
 }
 
-// can be used to check how many pages are present ,also size of each page
-// returns the id of the newest page, (PageId)-1 when there is no page yet
+// id of the newest page in the file, (PageId)-1 when the file has no pages
 PageId fetch_latest(void) {
   // reads file header
   FILE *file = fopen(g_path, "rb");
@@ -191,6 +198,8 @@ PageId fetch_latest(void) {
   return header.page_count - 1;
 }
 
+// appends one record to the latest page of the current target, allocating a
+// new page when there is not enough room for the record plus its slot entry
 void insert_record(const void *data, uint16_t length) {
   PageId page_id = fetch_latest();
   Page page = {};

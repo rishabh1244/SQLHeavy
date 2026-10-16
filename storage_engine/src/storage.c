@@ -1,3 +1,6 @@
+// storage.c — the Database API the clients (Rust FFI, tests) call.
+// Keeps the in-memory catalogue and routes inserts down to the page layer.
+
 #include "storage.h"
 
 #include "page_manager.h"
@@ -6,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// opens (creating if needed) data/<name>/ and loads its catalogue into memory
 Database *new_db(const char *name) {
   Database *db = calloc(1, sizeof(Database));
   if (db == NULL) {
@@ -28,6 +32,7 @@ Database *new_db(const char *name) {
   return db;
 }
 
+// frees the in-memory catalogue and the handle
 void close_db(Database *db) {
   if (db == NULL) {
     return;
@@ -37,6 +42,7 @@ void close_db(Database *db) {
   free(db);
 }
 
+// writes a new TableMetadata record to the catalogue file, then caches it
 TableMetadata *new_table(Database *db, const char *name,
                          const ColumnMetadata *columns,
                          uint16_t column_count) {
@@ -64,6 +70,7 @@ TableMetadata *new_table(Database *db, const char *name,
   return stored;
 }
 
+// looks up a table in the in-memory catalogue (linear scan over <= MAX_TABLES)
 TableMetadata *find_table(Database *db, const char *name) {
   if (db == NULL || db->catalogue == NULL || name == NULL) {
     return NULL;
