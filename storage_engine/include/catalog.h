@@ -32,8 +32,10 @@ typedef struct {
   TableMetadata tables[MAX_TABLES];
 } Catalogue;
 
-// data/<db_name>/catalog.dat — one TableMetadata record per table,
-// stored with the normal page/slot record format
+// data/<db_name>/catalog.dat — one TableMetadata record per table dose not
+// store the data content , just the metadata of the database table's , actuall
+// data is stored in tables/<table>.dat stored with the normal page/slot record
+// format
 
 // creates the database folder and an empty catalog.dat
 int catalogue_create(const char *db_name);
