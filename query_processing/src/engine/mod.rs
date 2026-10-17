@@ -40,3 +40,23 @@ pub async fn fetch_data(db: &Database, query: &str) -> Result<QueryResult, Strin
 pub fn print_records(result: &QueryResult) {
     query::print_records(result)
 }
+
+/// Scans `table` and prints every raw record with its unique physical id.
+pub fn print_table(db: &Database, table: &str) -> Result<(), String> {
+    let scan = db.scan(table)?;
+
+    print!("{:<8}", "rid");
+    for col in &scan.table.columns {
+        print!(" | {}", col.name);
+    }
+    println!();
+
+    for record in &scan.records {
+        print!("{:<8}", record.id.as_u64());
+        for value in &record.values {
+            print!(" | {value}");
+        }
+        println!();
+    }
+    Ok(())
+}

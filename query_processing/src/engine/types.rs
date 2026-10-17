@@ -105,10 +105,36 @@ pub struct TableInfo {
     pub columns: Vec<ColumnInfo>,
 }
 
-/// Ordered result of a raw scan: table schema plus one `Vec<Value>` per record.
+/// Physical location of one record: unique within its table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordId {
+    pub page_id: u32,
+    pub slot_id: u16,
+}
+
+impl RecordId {
+    /// The id packed into one number: `page_id << 16 | slot_id`.
+    pub fn as_u64(self) -> u64 {
+        ((self.page_id as u64) << 16) | self.slot_id as u64
+    }
+}
+
+impl std::fmt::Display for RecordId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_u64())
+    }
+}
+
+/// One scanned record: its unique id plus the decoded column values.
+pub struct Record {
+    pub id: RecordId,
+    pub values: Vec<Value>,
+}
+
+/// Ordered result of a raw scan: table schema plus every record.
 pub struct ScanResult {
     pub table: TableInfo,
-    pub rows: Vec<Vec<Value>>,
+    pub records: Vec<Record>,
 }
 
 /// Data contents returned by `fetch_data`: column names plus decoded rows.

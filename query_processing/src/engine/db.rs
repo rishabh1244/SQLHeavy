@@ -6,8 +6,8 @@ use std::os::raw::c_void;
 
 use super::ffi::*;
 use super::types::{
-    ColumnInfo, ColumnSpec, ScanResult, TableInfo, Value, c_field, read_value, table_info,
-    to_metadata, write_value,
+    ColumnInfo, ColumnSpec, Record, RecordId, ScanResult, TableInfo, Value, c_field, read_value,
+    table_info, to_metadata, write_value,
 };
 
 /// Open handle; closes the C database when dropped.
@@ -108,29 +108,37 @@ impl Database {
         }
 
         let info = table_info(&batch.meta);
-        let decoded: Result<Vec<Vec<Value>>, String> = if batch.records.is_null()
-            || batch.count == 0
-        {
-            Ok(Vec::new())
-        } else {
-            let records =
-                unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
-            records
-                .iter()
-                .map(|rec| {
-                    let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
-                    info.columns
-                        .iter()
-                        .map(|col| read_value(bytes, col))
-                        .collect::<Result<Vec<Value>, String>>()
-                })
-                .collect()
-        };
+        let decoded: Result<Vec<Record>, String> =
+            if batch.records.is_null() || batch.count == 0 {
+                Ok(Vec::new())
+            } else {
+                let records =
+                    unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
+                records
+                    .iter()
+                    .map(|rec| {
+                        let bytes =
+                            unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
+                        let values = info
+                            .columns
+                            .iter()
+                            .map(|col| read_value(bytes, col))
+                            .collect::<Result<Vec<Value>, String>>()?;
+                        Ok(Record {
+                            id: RecordId {
+                                page_id: rec.id.page_id,
+                                slot_id: rec.id.slot_id,
+                            },
+                            values,
+                        })
+                    })
+                    .collect()
+            };
 
         unsafe { scan_batch_free(&mut batch) };
         Ok(ScanResult {
             table: info,
-            rows: decoded?,
+            records: decoded?,
         })
     }
 

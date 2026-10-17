@@ -10,9 +10,16 @@ pub(crate) const TYPE_FLOAT64: c_int = 3;
 pub(crate) const TYPE_STRING: c_int = 4;
 
 #[repr(C)]
+pub(crate) struct RecordId {
+    pub page_id: u32,
+    pub slot_id: u16,
+}
+
+#[repr(C)]
 pub(crate) struct RawRecord {
     pub data: *const u8,
     pub len: u32,
+    pub id: RecordId,
 }
 
 #[repr(C)]

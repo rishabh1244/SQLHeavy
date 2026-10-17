@@ -9,7 +9,7 @@ rows in RAM.
 
 | File | Responsibility |
 |------|----------------|
-| `src/main.rs` | Demo driver. Only calls the high-level API: `open_db`, `create_table`, `insert_data`, `fetch_data`, `print_records`. No FFI, no Arrow. |
+| `src/main.rs` | Demo driver. Only calls the high-level API: `open_db`, `create_table`, `insert_data`, `print_table`, `fetch_data`, `print_records`. No FFI, no Arrow. |
 | `src/engine/mod.rs` | The public API and re-exports. This is the only module `main.rs` uses. |
 | `src/engine/db.rs` | Safe wrapper over the C database handle (`Database`: open / create_table / insert / scan / list_tables), plus the `Drop` that closes it. |
 | `src/engine/ffi.rs` | The **only** module that touches `libdatabase.so`: raw `#[repr(C)]` types and `extern "C"` declarations. |

@@ -15,7 +15,7 @@ use datafusion::datasource::MemTable;
 use datafusion::prelude::*;
 
 use super::db::Database;
-use super::types::{ColType, QueryResult, TableInfo, Value};
+use super::types::{ColType, QueryResult, Record, TableInfo, Value};
 
 /// Runs `query` via DataFusion over every catalogued table and returns its data.
 pub(crate) async fn fetch_data(db: &Database, query: &str) -> Result<QueryResult, String> {
@@ -34,7 +34,7 @@ pub(crate) async fn fetch_data(db: &Database, query: &str) -> Result<QueryResult
         }
         let scan = db.scan(&table.name)?;
         let schema = arrow_schema(&scan.table);
-        let batch = arrow_batch(schema.clone(), &scan.table, &scan.rows)?;
+        let batch = arrow_batch(schema.clone(), &scan.table, &scan.records)?;
         let mem = MemTable::try_new(schema.into(), vec![vec![batch]]).map_err(|e| e.to_string())?;
         ctx.register_table(table.name.as_str(), Arc::new(mem))
             .map_err(|e| e.to_string())?;
@@ -76,45 +76,54 @@ fn arrow_schema(info: &TableInfo) -> Schema {
     Schema::new(fields)
 }
 
-fn arrow_batch(schema: Schema, info: &TableInfo, rows: &[Vec<Value>]) -> Result<RecordBatch, String> {
+fn arrow_batch(
+    schema: Schema,
+    info: &TableInfo,
+    records: &[Record],
+) -> Result<RecordBatch, String> {
     let mut arrays: Vec<ArrayRef> = Vec::with_capacity(info.columns.len());
     for (ci, col) in info.columns.iter().enumerate() {
         let array: ArrayRef = match col.kind() {
             Some(ColType::U16) => Arc::new(
-                rows.iter()
-                    .map(|r| match &r[ci] {
+                records
+                    .iter()
+                    .map(|r| match &r.values[ci] {
                         Value::U16(v) => Some(*v),
                         _ => None,
                     })
                     .collect::<UInt16Array>(),
             ),
             Some(ColType::I32) => Arc::new(
-                rows.iter()
-                    .map(|r| match &r[ci] {
+                records
+                    .iter()
+                    .map(|r| match &r.values[ci] {
                         Value::I32(v) => Some(*v),
                         _ => None,
                     })
                     .collect::<Int32Array>(),
             ),
             Some(ColType::I64) => Arc::new(
-                rows.iter()
-                    .map(|r| match &r[ci] {
+                records
+                    .iter()
+                    .map(|r| match &r.values[ci] {
                         Value::I64(v) => Some(*v),
                         _ => None,
                     })
                     .collect::<Int64Array>(),
             ),
             Some(ColType::F64) => Arc::new(
-                rows.iter()
-                    .map(|r| match &r[ci] {
+                records
+                    .iter()
+                    .map(|r| match &r.values[ci] {
                         Value::F64(v) => Some(*v),
                         _ => None,
                     })
                     .collect::<Float64Array>(),
             ),
             Some(ColType::Str) => Arc::new(
-                rows.iter()
-                    .map(|r| match &r[ci] {
+                records
+                    .iter()
+                    .map(|r| match &r.values[ci] {
                         Value::Str(v) => Some(v.as_str()),
                         _ => None,
                     })

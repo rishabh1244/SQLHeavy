@@ -5,6 +5,7 @@ mod engine;
 
 use engine::{
     ColType, ColumnSpec, Value, create_table, fetch_data, insert_data, open_db, print_records,
+    print_table,
 };
 
 #[tokio::main]
@@ -23,6 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     insert_data(&db, "USERS", &[Value::I32(1), Value::Str("Alice".into())])?;
     insert_data(&db, "USERS", &[Value::I32(2), Value::Str("Bob".into())])?;
     insert_data(&db, "USERS", &[Value::I32(3), Value::Str("Charlie".into())])?;
+
+    print_table(&db, "USERS")?;
 
     let result = fetch_data(&db, "SELECT id, name FROM USERS ORDER BY id").await?;
     print_records(&result);
