@@ -21,6 +21,7 @@ struct RawRecord {
 struct ScanBatch {
     records: *mut RawRecord,
     count: u32,
+    meta: TableMetadata,
 }
 
 #[repr(C)]
@@ -127,9 +128,26 @@ impl ColumnSpec {
     }
 }
 
-pub struct UserRow {
-    pub id: i32,
-    pub name: String,
+/// One cell decoded from a record using its column metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    U16(u16),
+    I32(i32),
+    I64(i64),
+    F64(f64),
+    Str(String),
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::U16(v) => write!(f, "{v}"),
+            Value::I32(v) => write!(f, "{v}"),
+            Value::I64(v) => write!(f, "{v}"),
+            Value::F64(v) => write!(f, "{v}"),
+            Value::Str(v) => write!(f, "{v}"),
+        }
+    }
 }
 
 pub struct ColumnInfo {
@@ -139,9 +157,30 @@ pub struct ColumnInfo {
     pub length: u16,
 }
 
+impl ColumnInfo {
+    /// Decoded column type, `None` for a type code the engine does not define.
+    pub fn kind(&self) -> Option<ColType> {
+        match self.type_ {
+            TYPE_UINT16 => Some(ColType::U16),
+            TYPE_INT32 => Some(ColType::I32),
+            TYPE_INT64 => Some(ColType::I64),
+            TYPE_FLOAT64 => Some(ColType::F64),
+            TYPE_STRING => Some(ColType::Str),
+            _ => None,
+        }
+    }
+}
+
 pub struct TableInfo {
     pub name: String,
     pub columns: Vec<ColumnInfo>,
+}
+
+/// Ordered result of a scan: the table schema (from the batch metadata the C
+/// engine fills in) plus one `Vec<Value>` per record, cells in column order.
+pub struct ScanResult {
+    pub table: TableInfo,
+    pub rows: Vec<Vec<Value>>,
 }
 
 /// Open handle; closes the C database when dropped.
@@ -194,51 +233,44 @@ impl Database {
         Ok(())
     }
 
-    pub fn scan_users(&self, table: &str) -> Result<Vec<UserRow>, String> {
+    /// Scans `table`, taking its schema from the batch metadata the C engine
+    /// fills in, and decodes every record in column order.
+    pub fn scan(&self, table: &str) -> Result<ScanResult, String> {
         let c_table = CString::new(table).map_err(|_| "table name contains NUL".to_string())?;
         let c_db = CString::new(self.name.as_str())
             .map_err(|_| "database name contains NUL".to_string())?;
 
-        let cat_ptr = unsafe { catalogue_load(c_db.as_ptr()) };
-        if cat_ptr.is_null() {
-            return Err("catalogue_load failed".to_string());
-        }
-        let cat = unsafe { &*cat_ptr };
-        let meta = lookup_table(cat, table)
-            .ok_or_else(|| format!("no catalogue entry for {table}"))?;
-        let id_col =
-            column_by_name(meta, "id").ok_or_else(|| format!("{table} has no id column"))?;
-        let name_col =
-            column_by_name(meta, "name").ok_or_else(|| format!("{table} has no name column"))?;
-
-        let mut batch = ScanBatch {
-            records: std::ptr::null_mut(),
-            count: 0,
-        };
+        let mut batch: ScanBatch = unsafe { std::mem::zeroed() };
         let rc = unsafe { scan_table(c_db.as_ptr(), c_table.as_ptr(), &mut batch) };
+        if rc != 0 {
+            return Err(format!("scan_table({}.{}) failed: rc={rc}", self.name, table));
+        }
 
-        let rows = if rc != 0 {
-            Err(format!("scan_table({}.{}) failed: rc={rc}", self.name, table))
-        } else if batch.records.is_null() || batch.count == 0 {
-            Ok(Vec::new())
-        } else {
-            let records =
-                unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
-            records
-                .iter()
-                .map(|rec| {
-                    let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
-                    Ok(UserRow {
-                        id: read_i32(bytes, id_col)?,
-                        name: read_str(bytes, name_col)?,
+        let info = table_info(&batch.meta);
+        let decoded: Result<Vec<Vec<Value>>, String> =
+            if batch.records.is_null() || batch.count == 0 {
+                Ok(Vec::new())
+            } else {
+                let records =
+                    unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
+                records
+                    .iter()
+                    .map(|rec| {
+                        let bytes =
+                            unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
+                        info.columns
+                            .iter()
+                            .map(|col| read_value(bytes, col))
+                            .collect::<Result<Vec<Value>, String>>()
                     })
-                })
-                .collect()
-        };
+                    .collect()
+            };
 
         unsafe { scan_batch_free(&mut batch) };
-        unsafe { catalogue_free(cat_ptr) };
-        rows
+        Ok(ScanResult {
+            table: info,
+            rows: decoded?,
+        })
     }
 
     pub fn list_tables(&self) -> Result<Vec<TableInfo>, String> {
@@ -311,32 +343,42 @@ fn pack_user(id: i32, name: &str) -> User {
     u
 }
 
-fn lookup_table<'a>(cat: &'a Catalogue, name: &str) -> Option<&'a TableMetadata> {
-    cat.tables
-        .iter()
-        .take(cat.table_count as usize)
-        .find(|t| c_field(&t.name) == name)
+fn table_info(meta: &TableMetadata) -> TableInfo {
+    TableInfo {
+        name: c_field(&meta.name),
+        columns: (0..meta.column_count as usize)
+            .map(|j| {
+                let c = &meta.columns[j];
+                ColumnInfo {
+                    name: c_field(&c.name),
+                    type_: c.type_,
+                    offset: c.offset,
+                    length: c.length,
+                }
+            })
+            .collect(),
+    }
 }
 
-fn column_by_name<'a>(meta: &'a TableMetadata, name: &str) -> Option<&'a ColumnMetadata> {
-    meta.columns
-        .iter()
-        .take(meta.column_count as usize)
-        .find(|c| c_field(&c.name) == name)
-}
-
-fn read_i32(record: &[u8], col: &ColumnMetadata) -> Result<i32, String> {
-    let start = col.offset as usize;
-    let raw = record
-        .get(start..start + 4)
-        .ok_or_else(|| format!("record too short for column at offset {start}"))?;
-    Ok(i32::from_le_bytes(raw.try_into().unwrap()))
-}
-
-fn read_str(record: &[u8], col: &ColumnMetadata) -> Result<String, String> {
+fn read_value(record: &[u8], col: &ColumnInfo) -> Result<Value, String> {
     let start = col.offset as usize;
     let raw = record
         .get(start..start + col.length as usize)
-        .ok_or_else(|| format!("record too short for column at offset {start}"))?;
-    Ok(c_field(raw))
+        .ok_or_else(|| format!("record too short for column {} at offset {start}", col.name))?;
+
+    match (col.kind(), col.length) {
+        (Some(ColType::U16), 2) => Ok(Value::U16(u16::from_le_bytes(raw.try_into().unwrap()))),
+        (Some(ColType::I32), 4) => Ok(Value::I32(i32::from_le_bytes(raw.try_into().unwrap()))),
+        (Some(ColType::I64), 8) => Ok(Value::I64(i64::from_le_bytes(raw.try_into().unwrap()))),
+        (Some(ColType::F64), 8) => Ok(Value::F64(f64::from_le_bytes(raw.try_into().unwrap()))),
+        (Some(ColType::Str), _) => Ok(Value::Str(c_field(raw))),
+        (Some(_), len) => Err(format!(
+            "column {} has a type/length mismatch (len={len})",
+            col.name
+        )),
+        (None, _) => Err(format!(
+            "column {} has unknown type code {}",
+            col.name, col.type_
+        )),
+    }
 }
