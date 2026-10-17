@@ -44,8 +44,7 @@ void close_db(Database *db) {
 
 // writes a new TableMetadata record to the catalogue file, then caches it
 TableMetadata *new_table(Database *db, const char *name,
-                         const ColumnMetadata *columns,
-                         uint16_t column_count) {
+                         const ColumnMetadata *columns, uint16_t column_count) {
   if (db == NULL || db->catalogue == NULL || name == NULL) {
     return NULL;
   }

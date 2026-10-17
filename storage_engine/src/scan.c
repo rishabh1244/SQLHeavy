@@ -3,6 +3,7 @@
 
 #include "scan.h"
 
+#include "catalog.h"
 #include "page_manager.h"
 
 #include <stdlib.h>
@@ -31,8 +32,13 @@ int scan_table(const char *db_name, const char *table_name, ScanBatch *out) {
   }
   out->records = NULL;
   out->count = 0;
+  memset(&out->meta, 0, sizeof out->meta);
 
   if (db_name == NULL || table_name == NULL) {
+    return -1;
+  }
+
+  if (catalogue_get(db_name, table_name, &out->meta) != 0) {
     return -1;
   }
 

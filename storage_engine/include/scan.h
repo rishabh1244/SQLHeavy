@@ -1,6 +1,8 @@
 #ifndef SCAN_H
 #define SCAN_H
 
+#include "catalog.h"
+
 #include <stdint.h>
 
 typedef struct {
@@ -11,6 +13,7 @@ typedef struct {
 typedef struct {
   RawRecord *records;
   uint32_t count;
+  TableMetadata meta; // schema of the scanned table (from catalog.dat)
 } ScanBatch;
 
 // loads every record of data/<db_name>/<table_name>.dat into memory

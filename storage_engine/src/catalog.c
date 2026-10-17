@@ -13,8 +13,7 @@
 static int copy_meta(const Page *page, uint16_t i, TableMetadata *out) {
   Slot s = get_slot(page, i);
 
-  if (s.length != sizeof(TableMetadata) ||
-      s.offset < sizeof(PageHeader) ||
+  if (s.length != sizeof(TableMetadata) || s.offset < sizeof(PageHeader) ||
       (size_t)s.offset + s.length > PAGE_SIZE) {
     return -1;
   }
