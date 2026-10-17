@@ -9,8 +9,12 @@ rows in RAM.
 
 | File | Responsibility |
 |------|----------------|
-| `src/ffi.rs` | The **only** module that touches `libdatabase.so`: raw `#[repr(C)]` types, `extern "C"` declarations, and all `unsafe`. Exposes safe wrappers: `Database`, `create_table`, `insert`, `scan`, `table_schema`, `list_tables`. |
-| `src/main.rs` | Demo driver: open DB → create/insert `USERS` → scan → run SQL → print catalogue. |
+| `src/main.rs` | Demo driver. Only calls the high-level API: `open_db`, `create_table`, `insert_data`, `fetch_data`, `print_records`. No FFI, no Arrow. |
+| `src/engine/mod.rs` | The public API and re-exports. This is the only module `main.rs` uses. |
+| `src/engine/db.rs` | Safe wrapper over the C database handle (`Database`: open / create_table / insert / scan / list_tables), plus the `Drop` that closes it. |
+| `src/engine/ffi.rs` | The **only** module that touches `libdatabase.so`: raw `#[repr(C)]` types and `extern "C"` declarations. |
+| `src/engine/types.rs` | SQL-free domain types (`Value`, `ColType`, `ColumnSpec`, `QueryResult`, …) and the byte/layout helpers that encode/decode records from column metadata. |
+| `src/engine/query.rs` | The DataFusion boundary: `fetch_data(query)` builds an in-memory table from scans, runs SQL, and decodes results; `print_records`. |
 | `build.rs` | Tells Cargo where to find and link the C `.so`. It does **not** build it. |
 
 ## Linking (build.rs)
@@ -28,21 +32,23 @@ So `lib/libdatabase.so` must exist first. It is built by the top-level Makefile
 
 ## Flow
 
+What `main.rs` sees:
+
 ```
-Database::open("TEST_DB")          -> new_db            (C)
-create_table("USERS", cols)        -> new_table         (C)
-insert("USERS", &[Value])          -> db_insert_record  (C)
+open_db("TEST_DB")                    -> Database::open     -> open_db           (C)
+create_table(&db, "USERS", cols)      -> Database::create_table -> new_table    (C)
+insert_data(&db, "USERS", &[Value])   -> Database::insert   -> db_insert_record  (C)
     -> look up the table schema, pack values into a record by column offset/length
-scan("USERS")                      -> scan_table        (C)
-    -> decode each raw record using the column metadata carried by the batch
-    -> build an Arrow RecordBatch
-    -> register it as a DataFusion MemTable
-    -> ctx.sql("SELECT ...") -> show()
-list_tables()                      -> catalogue_load    (C)
+fetch_data(&db, "SELECT ...").await   -> query::fetch_data
+    -> list_tables (catalogue_load) + scan each table (scan_table)
+    -> build an Arrow RecordBatch, register it as a DataFusion MemTable
+    -> ctx.sql(query).collect()
+    -> decode results back into QueryResult { columns, rows }
+print_records(&result)
 ```
 
-The raw structs in `ffi.rs` (`ColumnMetadata`, `TableMetadata`, `Catalogue`,
-`ScanBatch`) must stay byte-for-byte identical to the C structs in
+The raw structs in `engine/ffi.rs` (`ColumnMetadata`, `TableMetadata`,
+`Catalogue`, `ScanBatch`) must stay byte-for-byte identical to the C structs in
 `../storage_engine/include/`. Rows are read and written generically from the
 column metadata (`offset`/`length`), so no per-table Rust struct is needed.
 
