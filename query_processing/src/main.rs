@@ -39,9 +39,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
 
-    db.insert_user("USERS", 1, "Alice")?;
-    db.insert_user("USERS", 2, "Bob")?;
-    db.insert_user("USERS", 3, "Charlie")?;
+    db.insert("USERS", &[Value::I32(1), Value::Str("Alice".to_string())])?;
+    db.insert("USERS", &[Value::I32(2), Value::Str("Bob".to_string())])?;
+    db.insert("USERS", &[Value::I32(3), Value::Str("Charlie".to_string())])?;
 
     // scan drives everything off the table metadata carried by the batch
     let scan = db.scan("USERS")?;

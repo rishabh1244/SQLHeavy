@@ -50,14 +50,6 @@ struct RawDatabase {
     _private: [u8; 0],
 }
 
-// row layout the C engine stores verbatim; must match the ColumnSpec offsets
-// declared in main.rs (id @0 len 4, name @4 len 16)
-#[repr(C)]
-struct User {
-    id: i32,
-    name: [u8; 16],
-}
-
 unsafe extern "C" {
     fn new_db(name: *const c_char) -> *mut RawDatabase;
     fn close_db(db: *mut RawDatabase);
@@ -88,7 +80,7 @@ unsafe extern "C" {
 // ---------- safe API ----------
 
 /// Column type codes accepted by the C engine.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[allow(dead_code)] // not every variant is used by main yet
 pub enum ColType {
     U16,
@@ -216,15 +208,46 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_user(&self, table: &str, id: i32, name: &str) -> Result<(), String> {
+    /// Looks up a table's schema in the C catalogue.
+    pub fn table_schema(&self, table: &str) -> Result<TableInfo, String> {
         let c_table = CString::new(table).map_err(|_| "table name contains NUL".to_string())?;
-        let user = pack_user(id, name);
+        let ptr = unsafe { find_table(self.ptr, c_table.as_ptr()) };
+        if ptr.is_null() {
+            return Err(format!("table {table} is not catalogued"));
+        }
+        Ok(table_info(unsafe { &*ptr }))
+    }
+
+    /// Packs `values` into a record using `table`'s column metadata and appends
+    /// it — the write-side counterpart of `scan`.
+    pub fn insert(&self, table: &str, values: &[Value]) -> Result<(), String> {
+        let c_table = CString::new(table).map_err(|_| "table name contains NUL".to_string())?;
+        let schema = self.table_schema(table)?;
+        if values.len() != schema.columns.len() {
+            return Err(format!(
+                "table {table} expects {} values, got {}",
+                schema.columns.len(),
+                values.len()
+            ));
+        }
+
+        let length = schema
+            .columns
+            .iter()
+            .map(|c| c.offset as usize + c.length as usize)
+            .max()
+            .unwrap_or(0);
+        let mut record = vec![0u8; length];
+        for (value, col) in values.iter().zip(&schema.columns) {
+            write_value(&mut record, col, value)?;
+        }
+
         let rc = unsafe {
             db_insert_record(
                 self.ptr,
                 c_table.as_ptr(),
-                &user as *const User as *const c_void,
-                std::mem::size_of::<User>() as u16,
+                record.as_ptr() as *const c_void,
+                record.len() as u16,
             )
         };
         if rc != 0 {
@@ -337,10 +360,36 @@ fn to_metadata(spec: &ColumnSpec) -> ColumnMetadata {
     col
 }
 
-fn pack_user(id: i32, name: &str) -> User {
-    let mut u = User { id, name: [0; 16] };
-    fill(&mut u.name, name);
-    u
+fn write_value(record: &mut [u8], col: &ColumnInfo, value: &Value) -> Result<(), String> {
+    let start = col.offset as usize;
+    let dst = record
+        .get_mut(start..start + col.length as usize)
+        .ok_or_else(|| format!("record too short for column {} at offset {start}", col.name))?;
+
+    let mismatch = || {
+        format!(
+            "value {value} does not fit column {} ({:?} len {})",
+            col.name,
+            col.kind(),
+            col.length
+        )
+    };
+
+    match (col.kind(), value) {
+        (Some(ColType::U16), Value::U16(v)) if col.length == 2 => dst.copy_from_slice(&v.to_le_bytes()),
+        (Some(ColType::I32), Value::I32(v)) if col.length == 4 => dst.copy_from_slice(&v.to_le_bytes()),
+        (Some(ColType::I64), Value::I64(v)) if col.length == 8 => dst.copy_from_slice(&v.to_le_bytes()),
+        (Some(ColType::F64), Value::F64(v)) if col.length == 8 => dst.copy_from_slice(&v.to_le_bytes()),
+        (Some(ColType::Str), Value::Str(v)) => {
+            let bytes = v.as_bytes();
+            if bytes.len() >= col.length as usize {
+                return Err(mismatch());
+            }
+            dst[..bytes.len()].copy_from_slice(bytes); // rest stays NUL padding
+        }
+        _ => return Err(mismatch()),
+    }
+    Ok(())
 }
 
 fn table_info(meta: &TableMetadata) -> TableInfo {

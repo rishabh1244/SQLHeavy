@@ -9,7 +9,7 @@ rows in RAM.
 
 | File | Responsibility |
 |------|----------------|
-| `src/ffi.rs` | The **only** module that touches `libdatabase.so`: raw `#[repr(C)]` types, `extern "C"` declarations, and all `unsafe`. Exposes safe wrappers: `Database`, `create_table`, `insert_user`, `scan_users`, `list_tables`. |
+| `src/ffi.rs` | The **only** module that touches `libdatabase.so`: raw `#[repr(C)]` types, `extern "C"` declarations, and all `unsafe`. Exposes safe wrappers: `Database`, `create_table`, `insert`, `scan`, `table_schema`, `list_tables`. |
 | `src/main.rs` | Demo driver: open DB → create/insert `USERS` → scan → run SQL → print catalogue. |
 | `build.rs` | Tells Cargo where to find and link the C `.so`. It does **not** build it. |
 
@@ -31,9 +31,10 @@ So `lib/libdatabase.so` must exist first. It is built by the top-level Makefile
 ```
 Database::open("TEST_DB")          -> new_db            (C)
 create_table("USERS", cols)        -> new_table         (C)
-insert_user(...)                   -> db_insert_record  (C)
-scan_users("USERS")                -> scan_table        (C)
-    -> decode each raw record using column offsets from the catalogue
+insert("USERS", &[Value])          -> db_insert_record  (C)
+    -> look up the table schema, pack values into a record by column offset/length
+scan("USERS")                      -> scan_table        (C)
+    -> decode each raw record using the column metadata carried by the batch
     -> build an Arrow RecordBatch
     -> register it as a DataFusion MemTable
     -> ctx.sql("SELECT ...") -> show()
@@ -42,8 +43,8 @@ list_tables()                      -> catalogue_load    (C)
 
 The raw structs in `ffi.rs` (`ColumnMetadata`, `TableMetadata`, `Catalogue`,
 `ScanBatch`) must stay byte-for-byte identical to the C structs in
-`../storage_engine/include/`. The `User` layout (`i32 id` @0, `[u8;16] name` @4)
-must match the column offsets/lengths passed to `create_table`.
+`../storage_engine/include/`. Rows are read and written generically from the
+column metadata (`offset`/`length`), so no per-table Rust struct is needed.
 
 ## Build & run
 
